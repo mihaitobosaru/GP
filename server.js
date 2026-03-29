@@ -25,6 +25,7 @@ const OAUTH_REDIRECT_URI = (
 ).trim();
 const API_USERNAME = (process.env.HIGHERLOGIC_API_USERNAME || "").trim();
 const API_PASSWORD = (process.env.HIGHERLOGIC_API_PASSWORD || "").trim();
+const HIGHERLOGIC_TENANT_KEY = (process.env.HIGHERLOGIC_TENANT_KEY || "").trim();
 const oauthStateStore = new Map();
 let oauthAccessToken = "";
 let apiAccessToken = "";
@@ -131,6 +132,13 @@ function getHeaders(req) {
   };
   if (upstreamCookieHeader) {
     headers.Cookie = upstreamCookieHeader;
+  }
+  // Some Higher Logic tenants also expect a tenant-key cookie keyed by tenant GUID.
+  if (HIGHERLOGIC_TENANT_KEY && token) {
+    const tenantCookiePair = `${HIGHERLOGIC_TENANT_KEY}=${token}`;
+    headers.Cookie = headers.Cookie
+      ? `${headers.Cookie}; ${tenantCookiePair}`
+      : tenantCookiePair;
   }
   return headers;
 }
