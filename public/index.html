@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Higher Logic Explorer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Higher Logic Explorer</h1>
+    <div class="sub">Browse communities and sync members to a local database.</div>
+    <div class="tabs">
+      <button type="button" class="tab active" id="tabBtnExplorer">Explorer</button>
+      <button type="button" class="tab" id="tabBtnDatabase">Database</button>
+    </div>
+
+    <div class="status">
+      Auth status: <strong id="authStatus">Checking...</strong>
+      <button id="loginBtn" style="margin-left:10px;">Login with Higher Logic</button>
+    </div>
+
+    <div id="panelExplorer" class="tab-panel">
+      <div class="sub" style="margin-top:12px;">Load communities → pick one → load members → pick one → inspect full member details</div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>1. Communities <span id="communityCount" class="pill" style="display:none;"></span></h2>
+          <button id="loadCommunitiesBtn">Load communities</button>
+          <div id="communitiesStatus" class="status"></div>
+          <div id="communitiesList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <h2>2. Members <span id="memberCount" class="pill" style="display:none;"></span></h2>
+          <div class="status">Selected community ID: <strong id="selectedCommunityId">-</strong></div>
+          <button id="loadMembersBtn" disabled>Load members</button>
+          <button id="loadMemberTableBtn" disabled>Load member table</button>
+          <div id="membersStatus" class="status"></div>
+          <div id="membersList" class="list"></div>
+        </div>
+
+        <div class="card">
+          <h2>3. Member details</h2>
+          <div class="status">Selected member ID: <strong id="selectedMemberId">-</strong></div>
+          <button id="loadMemberDetailsBtn" disabled>Load member details</button>
+          <div id="detailsStatus" class="status"></div>
+          <pre id="detailsOutput">No member selected yet.</pre>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>4. Community members table</h2>
+        <div id="memberTableStatus" class="status"></div>
+        <div id="memberTableWrap" class="tableWrap"></div>
+      </div>
+    </div>
+
+    <div id="panelDatabase" class="tab-panel hidden">
+      <div class="card">
+        <h2>Database sync</h2>
+        <p class="muted" style="margin-top:0;">Fetches all communities, all members per community, then contact details only for users not yet stored (unless you refresh all). Failed API calls are retried; tune <code>SYNC_CONTACT_CONCURRENCY</code> (default 4) and <code>SYNC_BATCH_DELAY_MS</code> (default 75) if Higher Logic rate-limits you.</p>
+        <div class="statRow" id="dbStatsRow">
+          <div class="statBox"><span>Communities</span><strong id="dbStatCommunities">0</strong></div>
+          <div class="statBox"><span>Unique users</span><strong id="dbStatUsers">0</strong></div>
+          <div class="statBox"><span>Membership links</span><strong id="dbStatLinks">0</strong></div>
+          <div class="statBox"><span>Memberships still missing contact row</span><strong id="dbStatPending">0</strong></div>
+          <div class="statBox"><span>Last sync completed</span><strong id="dbStatLastSync" style="font-size:14px;">—</strong></div>
+        </div>
+        <label class="muted" style="display:block;margin-bottom:8px;">
+          <input type="checkbox" id="syncRefreshAll" /> Refresh all contact details (slow; re-fetches every user)
+        </label>
+        <button type="button" id="dbSyncBtn">Re-sync now</button>
+        <div id="dbSyncProgress" class="progressLine"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Communities in database</h2>
+        <div id="dbCommunitiesStatus" class="status"></div>
+        <div id="dbCommunitiesWrap" class="tableWrap"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Users in database</h2>
+        <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Use paging below; default page size is 100 rows.</p>
+        <div style="margin-bottom:10px;">
+          <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+        </div>
+        <div id="dbUsersStatus" class="status"></div>
+        <div id="dbUsersWrap" class="tableWrap"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button type="button" id="dbUsersPrev" disabled>Previous</button>
+          <span id="dbUsersPage" class="muted"></span>
+          <button type="button" id="dbUsersNext" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
