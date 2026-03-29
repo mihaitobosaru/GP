@@ -22,7 +22,7 @@ app.use(express.json());
 
 function getHeaders() {
   return {
-    Authorization: `Bearer ${BEARER_TOKEN}`,
+    Authorization: `Bearer CfDJ8EsVP4rQ1A9IiTVIkDJ7RYZf4JAoIYKNFWAprbCy1kbtY6myo8sCQlj5PBa2l3cpA_sbxvAuZxf30xBi48YXPcph9RWrl1DRTFjTQTFoGKfv2Gqy4md0hrYKKQn2a4LvpVRhe-xlshKLCBjygpXMNq1YT3d0T4WhIZilxGiQEREvYJ-7-svLLGcK1MM6TxYKjJ6J3h75ll0YooU--I9ahb41e7I9fDxGcg4GogpoikVs`,
     HLIAMKey: 'b9ec0893-8164-0098-c307-0c0e94614b28',
     "Content-Type": "application/json"
   };
