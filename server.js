@@ -23,8 +23,11 @@ const OAUTH_REDIRECT_URI = (
   process.env.HIGHERLOGIC_OAUTH_REDIRECT_URI ||
   `http://localhost:${port}/auth/callback`
 ).trim();
+const API_USERNAME = (process.env.HIGHERLOGIC_API_USERNAME || "").trim();
+const API_PASSWORD = (process.env.HIGHERLOGIC_API_PASSWORD || "").trim();
 const oauthStateStore = new Map();
 let oauthAccessToken = "";
+let apiAccessToken = "";
 
 if (!HLIAM_KEY) {
   console.error(
@@ -71,15 +74,29 @@ function parseCookies(cookieHeader = "") {
 
 function getTokenSource(req) {
   const cookies = parseCookies(req?.headers?.cookie || "");
-  if (cookies.hl_access_token) return "cookie";
-  if (oauthAccessToken) return "oauth-memory";
+  if (cookies.hl_api_access_token) return "cookie";
+  if (apiAccessToken) return "api-memory";
   if (BEARER_TOKEN) return "env";
   return "none";
 }
 
 function getActiveBearerToken(req) {
   const cookies = parseCookies(req?.headers?.cookie || "");
-  return cookies.hl_access_token || oauthAccessToken || BEARER_TOKEN;
+  return cookies.hl_api_access_token || apiAccessToken || BEARER_TOKEN;
+}
+
+function extractToken(data) {
+  if (!data || typeof data !== "object") return "";
+  return (
+    data.access_token ||
+    data.AccessToken ||
+    data.Token ||
+    data.token ||
+    data.Data?.access_token ||
+    data.Data?.AccessToken ||
+    data.Data?.Token ||
+    ""
+  );
 }
 
 function getAuthDebug(req) {
@@ -87,8 +104,9 @@ function getAuthDebug(req) {
   const activeToken = getActiveBearerToken(req) || "";
   return {
     source: getTokenSource(req),
-    hasCookieToken: Boolean(cookies.hl_access_token),
-    hasMemoryToken: Boolean(oauthAccessToken),
+    hasCookieToken: Boolean(cookies.hl_api_access_token),
+    hasApiMemoryToken: Boolean(apiAccessToken),
+    hasOauthMemoryToken: Boolean(oauthAccessToken),
     hasEnvToken: Boolean(BEARER_TOKEN),
     tokenLength: activeToken.length,
     tokenPreview: activeToken ? `${activeToken.slice(0, 12)}...${activeToken.slice(-8)}` : null,
@@ -206,15 +224,58 @@ app.get("/auth/callback", async (req, res) => {
         .send(`Token exchange failed (${tokenResponse.status}): ${JSON.stringify(data)}`);
     }
 
-    oauthAccessToken = (data.access_token || "").trim();
+    oauthAccessToken = String(data.access_token || "").trim();
     if (!oauthAccessToken) {
       return res.status(500).send("Token response did not include access_token.");
+    }
+
+    if (!API_USERNAME || !API_PASSWORD) {
+      return res.status(500).send(
+        "Missing HIGHERLOGIC_API_USERNAME or HIGHERLOGIC_API_PASSWORD for Authentication/Login exchange."
+      );
+    }
+
+    const loginResponse = await fetch(
+      `${BASE_URL}/higherlogic/external/api/v1.0/Authentication/Login`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${oauthAccessToken}`,
+          HLIAMKey: HLIAM_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          Username: API_USERNAME,
+          Password: API_PASSWORD
+        })
+      }
+    );
+
+    const loginText = await loginResponse.text();
+    let loginData;
+    try {
+      loginData = loginText ? JSON.parse(loginText) : {};
+    } catch {
+      loginData = { raw: loginText };
+    }
+
+    if (!loginResponse.ok) {
+      return res.status(500).send(
+        `Authentication/Login failed (${loginResponse.status}): ${JSON.stringify(loginData)}`
+      );
+    }
+
+    apiAccessToken = String(extractToken(loginData)).trim();
+    if (!apiAccessToken) {
+      return res.status(500).send(
+        `Authentication/Login succeeded but no API token found in response: ${JSON.stringify(loginData)}`
+      );
     }
 
     const isHttps = OAUTH_REDIRECT_URI.startsWith("https://");
     res.setHeader(
       "Set-Cookie",
-      `hl_access_token=${encodeURIComponent(oauthAccessToken)}; Path=/; HttpOnly; SameSite=Lax${isHttps ? "; Secure" : ""}`
+      `hl_api_access_token=${encodeURIComponent(apiAccessToken)}; Path=/; HttpOnly; SameSite=Lax${isHttps ? "; Secure" : ""}`
     );
 
     return res.redirect("/?auth=success");
