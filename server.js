@@ -4,11 +4,18 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const BASE_URL = process.env.HIGHERLOGIC_BASE_URL || "https://gpsb02.connectedcommunity.org";
-const BEARER_TOKEN = process.env.HIGHERLOGIC_BEARER_TOKEN;
-const HLIAM_KEY = process.env.HIGHERLOGIC_IAM_KEY;
+const BEARER_TOKEN = (process.env.HIGHERLOGIC_BEARER_TOKEN || "").trim();
+const HLIAM_KEY = (
+  process.env.HIGHERLOGIC_IAM_KEY ||
+  process.env.HLIAM_KEY ||
+  ""
+).trim();
 
 if (!BEARER_TOKEN || !HLIAM_KEY) {
-  console.warn("Missing HIGHERLOGIC_BEARER_TOKEN or HIGHERLOGIC_IAM_KEY");
+  console.error(
+    "Missing required env vars. Set HIGHERLOGIC_BEARER_TOKEN and HIGHERLOGIC_IAM_KEY (or HLIAM_KEY)."
+  );
+  process.exit(1);
 }
 
 app.use(express.json());
