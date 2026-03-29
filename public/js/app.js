@@ -85,10 +85,18 @@ tabBtnExplorer.onclick = () => showTab("explorer");
 tabBtnDatabase.onclick = () => showTab("database");
 
 async function loadDbStats() {
+  const fileEl = document.getElementById("dbFileInfo");
   try {
-    const res = await fetch("/api/db/stats");
+    const res = await fetch("/api/db/info");
     const s = await res.json();
     if (!res.ok) throw new Error(s.error || "stats failed");
+    if (fileEl) {
+      const size =
+        s.fileExists && s.sizeBytes != null
+          ? `${(s.sizeBytes / 1024).toFixed(1)} KB`
+          : "file not present";
+      fileEl.textContent = `SQLite: ${s.databasePath} · ${size}`;
+    }
     document.getElementById("dbStatCommunities").textContent = s.communities;
     document.getElementById("dbStatUsers").textContent = s.users;
     document.getElementById("dbStatLinks").textContent = s.memberships;
@@ -97,6 +105,7 @@ async function loadDbStats() {
     document.getElementById("dbStatLastSync").textContent =
       s.lastSyncCompletedAt || "—";
   } catch (e) {
+    if (fileEl) fileEl.textContent = "Could not load DB info: " + e.message;
     document.getElementById("dbStatLastSync").textContent = "Error";
   }
 }

@@ -1,11 +1,11 @@
 import express from "express";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   openDatabase,
+  getDatabasePath,
   replaceAllMemberships,
   upsertCommunity,
   upsertUserFromRow,
@@ -16,6 +16,8 @@ import {
   listCommunitiesWithCounts,
   listMembershipsForCommunity
 } from "./db.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -813,6 +815,29 @@ app.get("/api/sync/status", (req, res) => {
 app.get("/api/db/stats", (req, res) => {
   try {
     res.json(getStats(db));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/db/info", (req, res) => {
+  try {
+    const databasePath = getDatabasePath();
+    let fileExists = false;
+    let sizeBytes = 0;
+    try {
+      const st = fs.statSync(databasePath);
+      fileExists = st.isFile();
+      sizeBytes = st.size;
+    } catch {
+      // file missing or not readable
+    }
+    res.json({
+      databasePath,
+      fileExists,
+      sizeBytes,
+      ...getStats(db)
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

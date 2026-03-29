@@ -59,6 +59,7 @@
       <div class="card">
         <h2>Database sync</h2>
         <p class="muted" style="margin-top:0;">Fetches all communities, all members per community, then contact details only for users not yet stored (unless you refresh all). Failed API calls are retried; tune <code>SYNC_CONTACT_CONCURRENCY</code> (default 4) and <code>SYNC_BATCH_DELAY_MS</code> (default 75) if Higher Logic rate-limits you.</p>
+        <p class="muted" id="dbFileInfo" style="font-size:12px;margin:0 0 8px;"></p>
         <div class="statRow" id="dbStatsRow">
           <div class="statBox"><span>Communities</span><strong id="dbStatCommunities">0</strong></div>
           <div class="statBox"><span>Unique users</span><strong id="dbStatUsers">0</strong></div>
