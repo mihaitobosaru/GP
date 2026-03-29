@@ -1,0 +1,110 @@
+/**
+ * HubSpot CRM contacts batch upsert (email as unique key).
+ * Optional env: HUBSPOT_CONTACT_MAP — JSON object mapping SQLite column → HubSpot property internal name.
+ */
+
+const BATCH_SIZE = 100;
+const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert";
+
+function defaultContactFieldMap() {
+  return {
+    email: "email",
+    first_name: "firstname",
+    last_name: "lastname",
+    company_name: "company",
+    company_title: "jobtitle",
+    city: "city",
+    state_province_code: "state",
+    postal_code: "zip",
+    country_code: "country"
+  };
+}
+
+export function getHubspotContactFieldMap() {
+  const map = { ...defaultContactFieldMap() };
+  const raw = (process.env.HUBSPOT_CONTACT_MAP || "").trim();
+  if (!raw) return map;
+  try {
+    const extra = JSON.parse(raw);
+    if (extra && typeof extra === "object") {
+      Object.assign(map, extra);
+    }
+  } catch {
+    console.warn("[hubspot] HUBSPOT_CONTACT_MAP is not valid JSON; using defaults only.");
+  }
+  return map;
+}
+
+function rowToHubspotInput(row, fieldMap) {
+  const emailRaw = row.email;
+  const email =
+    emailRaw == null ? "" : String(emailRaw).trim().toLowerCase();
+  if (!email) return null;
+
+  const properties = {};
+  for (const [dbCol, hsProp] of Object.entries(fieldMap)) {
+    if (!hsProp || typeof hsProp !== "string") continue;
+    const v = row[dbCol];
+    if (dbCol === "email") {
+      properties[hsProp] = email;
+      continue;
+    }
+    if (v == null || v === "") continue;
+    if (dbCol === "is_member") {
+      properties[hsProp] = v === 1 || v === true ? "true" : "false";
+      continue;
+    }
+    properties[hsProp] = String(v).trim();
+  }
+  if (!properties.email) properties.email = email;
+
+  return {
+    id: email,
+    idProperty: "email",
+    properties
+  };
+}
+
+/**
+ * @param {string} accessToken - Private app token (or OAuth access token)
+ * @param {object[]} userRows - SQLite user rows
+ * @param {Record<string,string>} [fieldMap]
+ * @returns {Promise<{ attempted: number, results: number, errors: { status?: number, body: string }[] }>}
+ */
+export async function upsertContactsToHubspot(accessToken, userRows, fieldMap) {
+  const map = fieldMap || getHubspotContactFieldMap();
+  const inputs = [];
+  for (const row of userRows) {
+    const input = rowToHubspotInput(row, map);
+    if (input) inputs.push(input);
+  }
+
+  const errors = [];
+  let results = 0;
+
+  for (let i = 0; i < inputs.length; i += BATCH_SIZE) {
+    const chunk = inputs.slice(i, i + BATCH_SIZE);
+    const res = await fetch(UPSERT_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ inputs: chunk })
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      errors.push({ status: res.status, body: text.slice(0, 2000) });
+      continue;
+    }
+    try {
+      const data = JSON.parse(text);
+      const n = Array.isArray(data.results) ? data.results.length : chunk.length;
+      results += n;
+    } catch {
+      results += chunk.length;
+    }
+  }
+
+  return { attempted: inputs.length, results, errors };
+}

@@ -277,6 +277,7 @@ export function resolveCommunityKeyForUpdate(
 export function applyCommunityMemberUpdates(db, { communityJoins, communityRemovals }) {
   const joins = Array.isArray(communityJoins) ? communityJoins : [];
   const removals = Array.isArray(communityRemovals) ? communityRemovals : [];
+  const touchedContactKeys = new Set();
   const stats = {
     usersTouchedJoins: 0,
     usersTouchedRemovals: 0,
@@ -324,6 +325,7 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
       ck
     );
     stats.usersTouchedJoins++;
+    touchedContactKeys.add(ck);
     const commKey = resolveCommunityKeyForUpdate(
       db,
       j.CommunityIntegrationID,
@@ -356,6 +358,7 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
       ck
     );
     stats.usersTouchedRemovals++;
+    touchedContactKeys.add(ck);
     const commKey = resolveCommunityKeyForUpdate(
       db,
       r.CommunityIntegrationID,
@@ -367,7 +370,19 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
     }
   }
 
-  return stats;
+  return {
+    stats,
+    touchedContactKeys: [...touchedContactKeys]
+  };
+}
+
+export function getUsersByContactKeys(db, contactKeys) {
+  const keys = [...new Set(contactKeys)].filter(Boolean);
+  if (!keys.length) return [];
+  const placeholders = keys.map(() => "?").join(",");
+  return db
+    .prepare(`SELECT * FROM users WHERE contact_key IN (${placeholders})`)
+    .all(...keys);
 }
 
 /** Whitelist keys for ORDER BY (SQL fragments; no user-controlled identifiers). */

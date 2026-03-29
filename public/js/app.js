@@ -433,11 +433,25 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "failed");
       const a = data.applied;
-      memberUpdatesProgress.textContent =
+      let msg =
         `API: ${data.api.joinCount} joins, ${data.api.removalCount} removals. ` +
         `DB: touched ${a.usersTouchedJoins} join rows / ${a.usersTouchedRemovals} removal rows; ` +
         `links +${a.linksAdded} −${a.linksRemoved}; ` +
         `skipped (not in DB) ${a.skippedNotInDb}, (no email) ${a.skippedNoEmail}`;
+      const h = data.hubspot;
+      if (h) {
+        if (h.skipped) {
+          msg += ` HubSpot: skipped — ${h.reason}`;
+        } else if (h.error) {
+          msg += ` HubSpot error: ${h.error}`;
+        } else {
+          msg += ` HubSpot: batch upsert reported ${h.resultsReported}/${h.attempted} contacts.`;
+          if (h.batchErrors && h.batchErrors.length) {
+            msg += ` (${h.batchErrors.length} batch request(s) failed — check server logs.)`;
+          }
+        }
+      }
+      memberUpdatesProgress.textContent = msg;
       loadDbStats();
       loadDbCommunities();
       loadDbUsersPage();

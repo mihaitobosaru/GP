@@ -15,8 +15,13 @@ import {
   listUsers,
   listCommunitiesWithCounts,
   listMembershipsForCommunity,
-  applyCommunityMemberUpdates
+  applyCommunityMemberUpdates,
+  getUsersByContactKeys
 } from "./db.mjs";
+import {
+  upsertContactsToHubspot,
+  getHubspotContactFieldMap
+} from "./hubspot.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -944,10 +949,52 @@ app.post("/api/db/member-updates", async (req, res) => {
     const removals = Array.isArray(data.CommunityRemovals)
       ? data.CommunityRemovals
       : [];
-    const applied = applyCommunityMemberUpdates(db, {
-      communityJoins: joins,
-      communityRemovals: removals
-    });
+    const { stats: applied, touchedContactKeys } = applyCommunityMemberUpdates(
+      db,
+      {
+        communityJoins: joins,
+        communityRemovals: removals
+      }
+    );
+
+    const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+    let hubspot;
+    if (!hubspotToken) {
+      hubspot = {
+        skipped: true,
+        reason: "Set HUBSPOT_ACCESS_TOKEN to push contacts to HubSpot."
+      };
+    } else if (!touchedContactKeys.length) {
+      hubspot = {
+        skipped: true,
+        reason: "No SQLite users matched member-update events (by email)."
+      };
+    } else {
+      const rows = getUsersByContactKeys(db, touchedContactKeys);
+      try {
+        const hs = await upsertContactsToHubspot(
+          hubspotToken,
+          rows,
+          getHubspotContactFieldMap()
+        );
+        hubspot = {
+          skipped: false,
+          attempted: hs.attempted,
+          resultsReported: hs.results,
+          batchErrors: hs.errors.length ? hs.errors : undefined
+        };
+        if (hs.errors.length) {
+          console.error("[hubspot] batch upsert errors:", hs.errors);
+        }
+      } catch (err) {
+        hubspot = {
+          skipped: false,
+          error: err.message,
+          attempted: rows.length
+        };
+      }
+    }
+
     res.json({
       ok: true,
       range: {
@@ -959,7 +1006,8 @@ app.post("/api/db/member-updates", async (req, res) => {
         joinCount: data.JoinCount ?? joins.length,
         removalCount: data.RemovalCount ?? removals.length
       },
-      applied
+      applied,
+      hubspot
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
