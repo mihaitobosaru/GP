@@ -150,6 +150,14 @@ function buildCookieHeaderFromSetCookie(setCookieValues) {
     .join("; ");
 }
 
+function getCookieNamesFromHeader(cookieHeader = "") {
+  if (!cookieHeader) return [];
+  return cookieHeader
+    .split(";")
+    .map((pair) => pair.trim().split("=")[0]?.trim())
+    .filter(Boolean);
+}
+
 async function hlFetch(path, req) {
   const url = new URL(`${BASE_URL}${path}`);
 
@@ -302,6 +310,10 @@ app.get("/auth/callback", async (req, res) => {
       "[auth/callback] Upstream login cookies captured:",
       loginSetCookies.length
     );
+    console.log(
+      "[auth/callback] Upstream login cookie names:",
+      getCookieNamesFromHeader(upstreamCookieHeader)
+    );
 
     apiAccessToken = String(extractToken(loginData)).trim();
     console.log("[auth/callback] Extracted API token length:", apiAccessToken.length);
@@ -348,6 +360,10 @@ app.get("/api/communities", async (req, res) => {
     console.log("[/api/communities] HLIAMKey:", HLIAM_KEY);
     console.log("[/api/communities] Bearer token used:", tokenUsed);
     console.log("[/api/communities] Token source:", source);
+    console.log(
+      "[/api/communities] Upstream cookie names:",
+      getCookieNamesFromHeader(upstreamCookieHeader)
+    );
 
     const data = await hlFetch(
       "/higherlogic/external/api/v1.0/Communities/GetViewableCommunities?includeStatistics=false",
