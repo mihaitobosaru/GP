@@ -57,12 +57,33 @@ function createPkcePair() {
   return { codeVerifier, codeChallenge };
 }
 
-function getActiveBearerToken() {
-  return oauthAccessToken || BEARER_TOKEN;
+function parseCookies(cookieHeader = "") {
+  const cookies = {};
+  if (!cookieHeader) return cookies;
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (!rawKey) continue;
+    cookies[rawKey] = decodeURIComponent(rawValue.join("=") || "");
+  }
+  return cookies;
 }
 
-function getHeaders() {
-  const token = getActiveBearerToken();
+function getTokenSource(req) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  if (cookies.hl_access_token) return "cookie";
+  if (oauthAccessToken) return "oauth-memory";
+  if (BEARER_TOKEN) return "env";
+  return "none";
+}
+
+function getActiveBearerToken(req) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  return cookies.hl_access_token || oauthAccessToken || BEARER_TOKEN;
+}
+
+function getHeaders(req) {
+  const token = getActiveBearerToken(req);
   if (!token) {
     throw new Error(
       "No access token available. Configure HIGHERLOGIC_BEARER_TOKEN or login via /auth/login."
@@ -75,10 +96,10 @@ function getHeaders() {
   };
 }
 
-async function hlFetch(path) {
+async function hlFetch(path, req) {
   const response = await fetch(`${BASE_URL}${path}`, {
     method: "GET",
-    headers: getHeaders()
+    headers: getHeaders(req)
   });
 
   const text = await response.text();
@@ -175,6 +196,12 @@ app.get("/auth/callback", async (req, res) => {
       return res.status(500).send("Token response did not include access_token.");
     }
 
+    const isHttps = OAUTH_REDIRECT_URI.startsWith("https://");
+    res.setHeader(
+      "Set-Cookie",
+      `hl_access_token=${encodeURIComponent(oauthAccessToken)}; Path=/; HttpOnly; SameSite=Lax${isHttps ? "; Secure" : ""}`
+    );
+
     return res.redirect("/?auth=success");
   } catch (tokenError) {
     return res.status(500).send(`OAuth callback failed: ${tokenError.message}`);
@@ -182,10 +209,10 @@ app.get("/auth/callback", async (req, res) => {
 });
 
 app.get("/api/auth/status", (req, res) => {
-  const activeToken = getActiveBearerToken();
+  const activeToken = getActiveBearerToken(req);
   res.json({
     authenticated: Boolean(activeToken),
-    source: oauthAccessToken ? "oauth" : (BEARER_TOKEN ? "env" : "none"),
+    source: getTokenSource(req),
     hasIamKey: Boolean(HLIAM_KEY),
     oauthConfigured: Boolean(OAUTH_CLIENT_ID)
   });
@@ -197,12 +224,15 @@ app.get("/api/auth/status", (req, res) => {
  */
 app.get("/api/communities", async (req, res) => {
   try {
-    const tokenUsed = getActiveBearerToken();
+    const tokenUsed = getActiveBearerToken(req);
+    const source = getTokenSource(req);
     console.log("[/api/communities] HLIAMKey:", HLIAM_KEY);
     console.log("[/api/communities] Bearer token used:", tokenUsed);
+    console.log("[/api/communities] Token source:", source);
 
     const data = await hlFetch(
-      "/higherlogic/external/api/v1.0/Communities/GetViewableCommunities?includeStatistics=false"
+      "/higherlogic/external/api/v1.0/Communities/GetViewableCommunities?includeStatistics=false",
+      req
     );
     res.json(data);
   } catch (error) {
@@ -215,7 +245,8 @@ app.get("/api/communities/:communityId/members", async (req, res) => {
     const { communityId } = req.params;
 
     const data = await hlFetch(
-      `/higherlogic/external/api/v1.0/Communities/${communityId}/Members`
+      `/higherlogic/external/api/v1.0/Communities/${communityId}/Members`,
+      req
     );
 
     res.json(data);
@@ -229,7 +260,8 @@ app.get("/api/members/:memberId", async (req, res) => {
     const { memberId } = req.params;
 
     const data = await hlFetch(
-      `/higherlogic/external/api/v1.0/Contacts/${memberId}`
+      `/higherlogic/external/api/v1.0/Contacts/${memberId}`,
+      req
     );
 
     res.json(data);
