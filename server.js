@@ -28,6 +28,7 @@ const API_PASSWORD = (process.env.HIGHERLOGIC_API_PASSWORD || "").trim();
 const oauthStateStore = new Map();
 let oauthAccessToken = "";
 let apiAccessToken = "";
+let upstreamCookieHeader = "";
 
 if (!HLIAM_KEY) {
   console.error(
@@ -107,6 +108,7 @@ function getAuthDebug(req) {
     hasCookieToken: Boolean(cookies.hl_api_access_token),
     hasApiMemoryToken: Boolean(apiAccessToken),
     hasOauthMemoryToken: Boolean(oauthAccessToken),
+    hasUpstreamCookie: Boolean(upstreamCookieHeader),
     hasEnvToken: Boolean(BEARER_TOKEN),
     tokenLength: activeToken.length,
     tokenPreview: activeToken ? `${activeToken.slice(0, 12)}...${activeToken.slice(-8)}` : null,
@@ -122,11 +124,31 @@ function getHeaders(req) {
       "No access token available. Configure HIGHERLOGIC_BEARER_TOKEN or login via /auth/login."
     );
   }
-  return {
+  const headers = {
     Authorization: `Bearer ${token}`,
     HLIAMKey: HLIAM_KEY,
     "Content-Type": "application/json"
   };
+  if (upstreamCookieHeader) {
+    headers.Cookie = upstreamCookieHeader;
+  }
+  return headers;
+}
+
+function getSetCookieHeaders(response) {
+  if (typeof response.headers.getSetCookie === "function") {
+    return response.headers.getSetCookie();
+  }
+  const single = response.headers.get("set-cookie");
+  return single ? [single] : [];
+}
+
+function buildCookieHeaderFromSetCookie(setCookieValues) {
+  if (!Array.isArray(setCookieValues) || !setCookieValues.length) return "";
+  return setCookieValues
+    .map((entry) => String(entry).split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
 }
 
 async function hlFetch(path, req) {
@@ -279,6 +301,13 @@ app.get("/auth/callback", async (req, res) => {
         `Authentication/Login failed (${loginResponse.status}): ${JSON.stringify(loginData)}`
       );
     }
+
+    const loginSetCookies = getSetCookieHeaders(loginResponse);
+    upstreamCookieHeader = buildCookieHeaderFromSetCookie(loginSetCookies);
+    console.log(
+      "[auth/callback] Upstream login cookies captured:",
+      loginSetCookies.length
+    );
 
     apiAccessToken = String(extractToken(loginData)).trim();
     console.log("[auth/callback] Extracted API token length:", apiAccessToken.length);
