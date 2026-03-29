@@ -238,21 +238,23 @@ app.get("/auth/callback", async (req, res) => {
       );
     }
 
-    const loginResponse = await fetch(
-      `${BASE_URL}/higherlogic/external/api/v1.0/Authentication/Login`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${oauthAccessToken}`,
-          HLIAMKey: HLIAM_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          Username: API_USERNAME,
-          Password: API_PASSWORD
-        })
-      }
+    const loginUrl = new URL(
+      `${BASE_URL}/higherlogic/external/api/v1.0/Authentication/Login`
     );
+    // Match Postman "Add authorization data to: Request URL".
+    loginUrl.searchParams.set("access_token", oauthAccessToken);
+
+    const loginResponse = await fetch(loginUrl.toString(), {
+      method: "POST",
+      headers: {
+        HLIAMKey: HLIAM_KEY,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        Username: API_USERNAME,
+        Password: API_PASSWORD
+      })
+    });
 
     const loginText = await loginResponse.text();
     let loginData;
