@@ -456,7 +456,7 @@ app.get("/api/members/:memberId", async (req, res) => {
     const { memberId } = req.params;
 
     const data = await hlFetch(
-      `/higherlogic/external/api/v1.0/Contacts/${memberId}`,
+      `/higherlogic/external/api/v1.0/Contacts/GetContact?contactKey=${encodeURIComponent(memberId)}`,
       req
     );
 
