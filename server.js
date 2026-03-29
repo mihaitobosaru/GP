@@ -118,9 +118,29 @@ const syncState = {
   contactsToFetch: 0,
   contactsFetched: 0,
   contactsSkipped: 0,
+  contactsSucceeded: 0,
+  contactsFailed: 0,
   message: "",
   error: null
 };
+
+async function hlFetchContactWithRetry(contactKey, syncReq) {
+  const path = `/higherlogic/external/api/v1.0/Contacts/GetContact?contactKey=${encodeURIComponent(contactKey)}`;
+  const maxRetries = Math.max(1, parseInt(process.env.SYNC_GETCONTACT_RETRIES || "4", 10));
+  let lastErr;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await hlFetch(path, syncReq);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxRetries - 1) {
+        const delay = Math.min(25000, 500 * 2 ** attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 async function runFullSync(cookieHeader, refreshAllDetails) {
   const startedAt = new Date().toISOString();
@@ -133,6 +153,8 @@ async function runFullSync(cookieHeader, refreshAllDetails) {
     contactsToFetch: 0,
     contactsFetched: 0,
     contactsSkipped: 0,
+    contactsSucceeded: 0,
+    contactsFailed: 0,
     message: "Starting…",
     error: null
   });
@@ -148,8 +170,12 @@ async function runFullSync(cookieHeader, refreshAllDetails) {
     1,
     Math.min(
       32,
-      parseInt(process.env.SYNC_CONTACT_CONCURRENCY || "8", 10)
+      parseInt(process.env.SYNC_CONTACT_CONCURRENCY || "4", 10)
     )
+  );
+  const batchDelayMs = Math.max(
+    0,
+    parseInt(process.env.SYNC_BATCH_DELAY_MS || "75", 10)
   );
 
   try {
@@ -194,26 +220,34 @@ async function runFullSync(cookieHeader, refreshAllDetails) {
     syncState.contactsSkipped = uniqueKeys.length - toFetch.length;
     syncState.contactsToFetch = toFetch.length;
     syncState.contactsFetched = 0;
+    syncState.contactsSucceeded = 0;
+    syncState.contactsFailed = 0;
 
     syncState.phase = "contacts";
-    syncState.message = `Fetching contact details (${toFetch.length} calls)…`;
+    syncState.message = `Fetching contact details (${toFetch.length} API calls)…`;
 
     for (let i = 0; i < toFetch.length; i += concurrency) {
       const batch = toFetch.slice(i, i + concurrency);
-      await Promise.all(
+      const results = await Promise.all(
         batch.map(async (contactKey) => {
           try {
-            const detail = await hlFetch(
-              `/higherlogic/external/api/v1.0/Contacts/GetContact?contactKey=${encodeURIComponent(contactKey)}`,
-              syncReq
-            );
+            const detail = await hlFetchContactWithRetry(contactKey, syncReq);
             upsertUserFromRow(db, contactKey, toTableRow(detail));
+            return "ok";
           } catch (e) {
             console.error("[sync] GetContact failed", contactKey, e.message);
+            return "fail";
           }
         })
       );
-      syncState.contactsFetched = Math.min(i + batch.length, toFetch.length);
+      const ok = results.filter((r) => r === "ok").length;
+      syncState.contactsSucceeded += ok;
+      syncState.contactsFailed += results.length - ok;
+      syncState.contactsFetched += results.length;
+      syncState.message = `Contacts ${syncState.contactsFetched}/${toFetch.length} (ok ${syncState.contactsSucceeded}, failed ${syncState.contactsFailed})…`;
+      if (batchDelayMs > 0 && i + concurrency < toFetch.length) {
+        await new Promise((r) => setTimeout(r, batchDelayMs));
+      }
     }
 
     const completedAt = new Date().toISOString();
@@ -223,7 +257,7 @@ async function runFullSync(cookieHeader, refreshAllDetails) {
       last_sync_error: null
     });
     syncState.phase = "done";
-    syncState.message = "Sync completed.";
+    syncState.message = `Done. Contact details: ${syncState.contactsSucceeded} succeeded, ${syncState.contactsFailed} failed (after retries).`;
   } catch (e) {
     syncState.error = e.message;
     syncState.phase = "error";
@@ -783,12 +817,20 @@ app.get("/api/db/stats", (req, res) => {
 app.get("/api/db/users", (req, res) => {
   try {
     const limit = Math.min(
-      200,
-      Math.max(1, parseInt(req.query.limit || "50", 10))
+      500,
+      Math.max(1, parseInt(req.query.limit || "100", 10))
     );
     const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
     const q = req.query.q || "";
-    res.json(listUsers(db, { limit, offset, q }));
+    const { rows, total } = listUsers(db, { limit, offset, q });
+    const stats = getStats(db);
+    res.json({
+      rows,
+      total,
+      lastGlobalSyncCompleted: stats.lastSyncCompletedAt,
+      lastGlobalSyncStarted: stats.lastSyncStartedAt,
+      contactsMissingDetails: stats.contactsMissingDetails
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1060,11 +1102,12 @@ app.get("/", (req, res) => {
     <div id="panelDatabase" class="tab-panel hidden">
       <div class="card">
         <h2>Database sync</h2>
-        <p class="muted" style="margin-top:0;">Fetches all communities, all members per community, then contact details only for users not yet stored (unless you refresh all).</p>
+        <p class="muted" style="margin-top:0;">Fetches all communities, all members per community, then contact details only for users not yet stored (unless you refresh all). Failed API calls are retried; tune <code>SYNC_CONTACT_CONCURRENCY</code> (default 4) and <code>SYNC_BATCH_DELAY_MS</code> (default 75) if Higher Logic rate-limits you.</p>
         <div class="statRow" id="dbStatsRow">
           <div class="statBox"><span>Communities</span><strong id="dbStatCommunities">0</strong></div>
           <div class="statBox"><span>Unique users</span><strong id="dbStatUsers">0</strong></div>
           <div class="statBox"><span>Membership links</span><strong id="dbStatLinks">0</strong></div>
+          <div class="statBox"><span>Memberships still missing contact row</span><strong id="dbStatPending">0</strong></div>
           <div class="statBox"><span>Last sync completed</span><strong id="dbStatLastSync" style="font-size:14px;">—</strong></div>
         </div>
         <label class="muted" style="display:block;margin-bottom:8px;">
@@ -1082,6 +1125,7 @@ app.get("/", (req, res) => {
 
       <div class="card" style="margin-top:16px;">
         <h2>Users in database</h2>
+        <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Use paging below; default page size is 100 rows.</p>
         <div style="margin-bottom:10px;">
           <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
         </div>
@@ -1157,7 +1201,7 @@ app.get("/", (req, res) => {
     const dbUsersPage = document.getElementById("dbUsersPage");
 
     let dbUsersOffset = 0;
-    const dbUsersLimit = 50;
+    const dbUsersLimit = 100;
     let syncPollTimer = null;
 
     function showTab(which) {
@@ -1189,6 +1233,8 @@ app.get("/", (req, res) => {
         document.getElementById("dbStatCommunities").textContent = s.communities;
         document.getElementById("dbStatUsers").textContent = s.users;
         document.getElementById("dbStatLinks").textContent = s.memberships;
+        const elP = document.getElementById("dbStatPending");
+        if (elP) elP.textContent = s.contactsMissingDetails != null ? s.contactsMissingDetails : "—";
         document.getElementById("dbStatLastSync").textContent =
           s.lastSyncCompletedAt || "—";
       } catch (e) {
@@ -1241,21 +1287,51 @@ app.get("/", (req, res) => {
       }
     }
 
-    function renderDbUsersTable(rows) {
+    function orderUserTableColumns(keys) {
+      const priority = [
+        "contact_key",
+        "first_name",
+        "last_name",
+        "company_name",
+        "email",
+        "company_title",
+        "city",
+        "state_province_code",
+        "postal_code",
+        "country_code",
+        "region",
+        "create_date",
+        "updated_on",
+        "is_member",
+        "membership_level",
+        "membership_status",
+        "db_updated_at",
+        "communities_list"
+      ];
+      const out = [];
+      for (const p of priority) {
+        if (keys.includes(p)) out.push(p);
+      }
+      for (const k of [...keys].sort()) {
+        if (!out.includes(k)) out.push(k);
+      }
+      return out;
+    }
+
+    function renderDbUsersTable(rows, meta) {
       dbUsersWrap.innerHTML = "";
       if (!rows.length) {
         dbUsersWrap.textContent = "No users.";
         return;
       }
-      const cols = [
-        "first_name",
-        "last_name",
-        "email",
-        "company_name",
-        "city",
-        "updated_on",
-        "contact_key"
-      ];
+      const sampleKeys = Object.keys(rows[0]);
+      const cols = orderUserTableColumns(sampleKeys);
+      if (!cols.includes("last_global_sync_completed")) {
+        cols.push("last_global_sync_completed");
+      }
+      if (!cols.includes("last_global_sync_started")) {
+        cols.push("last_global_sync_started");
+      }
       const table = document.createElement("table");
       const thead = document.createElement("thead");
       const hr = document.createElement("tr");
@@ -1271,7 +1347,18 @@ app.get("/", (req, res) => {
         const tr = document.createElement("tr");
         cols.forEach((c) => {
           const td = document.createElement("td");
-          td.textContent = r[c] == null ? "" : String(r[c]);
+          let val;
+          if (c === "last_global_sync_completed") {
+            val = meta && meta.lastGlobalSyncCompleted || "";
+          } else if (c === "last_global_sync_started") {
+            val = meta && meta.lastGlobalSyncStarted || "";
+          } else {
+            val = r[c];
+          }
+          if (c === "is_member") {
+            val = val === 1 || val === true ? "Yes" : val === 0 || val === false ? "No" : val;
+          }
+          td.textContent = val == null ? "" : String(val);
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -1294,7 +1381,12 @@ app.get("/", (req, res) => {
         );
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "failed");
-        renderDbUsersTable(data.rows || []);
+        const meta = {
+          lastGlobalSyncCompleted: data.lastGlobalSyncCompleted || "",
+          lastGlobalSyncStarted: data.lastGlobalSyncStarted || "",
+          contactsMissingDetails: data.contactsMissingDetails
+        };
+        renderDbUsersTable(data.rows || [], meta);
         const total = data.total || 0;
         dbUsersPage.textContent =
           "Showing " +
@@ -1305,7 +1397,9 @@ app.get("/", (req, res) => {
           total;
         dbUsersPrev.disabled = dbUsersOffset <= 0;
         dbUsersNext.disabled = dbUsersOffset + dbUsersLimit >= total;
-        dbUsersStatus.textContent = "";
+        dbUsersStatus.textContent =
+          "Memberships still missing a stored contact row (run sync): " +
+          (data.contactsMissingDetails != null ? data.contactsMissingDetails : "—");
       } catch (e) {
         dbUsersStatus.textContent = "Error: " + e.message;
       }
@@ -1350,7 +1444,10 @@ app.get("/", (req, res) => {
               (s.contactsFetched || 0) +
               "/" +
               (s.contactsToFetch || 0) +
-              (s.contactsSkipped ? " (skipped " + s.contactsSkipped + ")" : "");
+              (s.contactsSkipped ? " (already in DB " + s.contactsSkipped + ")" : "") +
+              (s.contactsSucceeded != null || s.contactsFailed != null
+                ? " — ok " + (s.contactsSucceeded || 0) + ", failed " + (s.contactsFailed || 0)
+                : "");
           } else {
             dbSyncProgress.textContent = s.error
               ? "Error: " + s.error

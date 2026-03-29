@@ -158,6 +158,14 @@ export function getStats(db) {
   const links = db
     .prepare("SELECT COUNT(*) AS n FROM user_communities")
     .get().n;
+  const contactsMissingDetails = db
+    .prepare(
+      `SELECT COUNT(DISTINCT uc.contact_key) AS n
+       FROM user_communities uc
+       LEFT JOIN users u ON u.contact_key = uc.contact_key
+       WHERE u.contact_key IS NULL`
+    )
+    .get().n;
   const meta = db
     .prepare(
       "SELECT last_sync_started_at, last_sync_completed_at, last_sync_status, last_sync_error FROM sync_meta WHERE id = 1"
@@ -167,6 +175,7 @@ export function getStats(db) {
     communities,
     users,
     memberships: links,
+    contactsMissingDetails,
     lastSyncStartedAt: meta?.last_sync_started_at || null,
     lastSyncCompletedAt: meta?.last_sync_completed_at || null,
     lastSyncStatus: meta?.last_sync_status || null,
@@ -205,27 +214,28 @@ export function setSyncMeta(db, fields) {
   }
 }
 
+const usersCommunitiesSubquery = `
+  (SELECT GROUP_CONCAT(c.name, ' | ')
+   FROM user_communities uc
+   INNER JOIN communities c ON c.community_key = uc.community_key
+   WHERE uc.contact_key = u.contact_key) AS communities_list`;
+
 export function listUsers(db, { limit = 50, offset = 0, q = "" }) {
   const search = `%${(q || "").trim()}%`;
   const hasQ = Boolean((q || "").trim());
   const base = hasQ
-    ? `FROM users WHERE
-        first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company_name LIKE ?
-        OR contact_key LIKE ?`
-    : "FROM users WHERE 1=1";
+    ? `FROM users u WHERE
+        u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.company_name LIKE ?
+        OR u.contact_key LIKE ?`
+    : "FROM users u WHERE 1=1";
   const countSql = `SELECT COUNT(*) AS n ${base}`;
   const count = hasQ
     ? db.prepare(countSql).get(search, search, search, search, search).n
     : db.prepare(countSql).get().n;
+  const selectSql = `SELECT u.*, ${usersCommunitiesSubquery} ${base} ORDER BY u.last_name, u.first_name LIMIT ? OFFSET ?`;
   const rows = hasQ
-    ? db
-        .prepare(
-          `SELECT * ${base} ORDER BY last_name, first_name LIMIT ? OFFSET ?`
-        )
-        .all(search, search, search, search, search, limit, offset)
-    : db
-        .prepare(`SELECT * FROM users ORDER BY last_name, first_name LIMIT ? OFFSET ?`)
-        .all(limit, offset);
+    ? db.prepare(selectSql).all(search, search, search, search, search, limit, offset)
+    : db.prepare(selectSql).all(limit, offset);
   return { rows, total: count };
 }
 
