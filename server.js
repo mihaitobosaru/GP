@@ -189,7 +189,7 @@ app.get("/api/auth/status", (req, res) => {
     hasIamKey: Boolean(HLIAM_KEY),
     oauthConfigured: Boolean(OAUTH_CLIENT_ID)
   });
-  console.log(`Active token: ${activeToken}`);
+
 });
 
 /**
@@ -197,6 +197,10 @@ app.get("/api/auth/status", (req, res) => {
  */
 app.get("/api/communities", async (req, res) => {
   try {
+    const tokenUsed = getActiveBearerToken();
+    console.log("[/api/communities] HLIAMKey:", HLIAM_KEY);
+    console.log("[/api/communities] Bearer token used:", tokenUsed);
+
     const data = await hlFetch(
       "/higherlogic/external/api/v1.0/Communities/GetViewableCommunities?includeStatistics=false"
     );
