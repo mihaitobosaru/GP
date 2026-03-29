@@ -82,6 +82,21 @@ function getActiveBearerToken(req) {
   return cookies.hl_access_token || oauthAccessToken || BEARER_TOKEN;
 }
 
+function getAuthDebug(req) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  const activeToken = getActiveBearerToken(req) || "";
+  return {
+    source: getTokenSource(req),
+    hasCookieToken: Boolean(cookies.hl_access_token),
+    hasMemoryToken: Boolean(oauthAccessToken),
+    hasEnvToken: Boolean(BEARER_TOKEN),
+    tokenLength: activeToken.length,
+    tokenPreview: activeToken ? `${activeToken.slice(0, 12)}...${activeToken.slice(-8)}` : null,
+    hliamKeyPresent: Boolean(HLIAM_KEY),
+    hliamKeyPreview: HLIAM_KEY ? `${HLIAM_KEY.slice(0, 8)}...${HLIAM_KEY.slice(-4)}` : null
+  };
+}
+
 function getHeaders(req) {
   const token = getActiveBearerToken(req);
   if (!token) {
@@ -219,6 +234,10 @@ app.get("/api/auth/status", (req, res) => {
 
 });
 
+app.get("/api/debug/auth", (req, res) => {
+  res.json(getAuthDebug(req));
+});
+
 /**
  * Adjust these endpoints if your exact member/member-detail routes differ.
  */
@@ -236,7 +255,10 @@ app.get("/api/communities", async (req, res) => {
     );
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      error: error.message,
+      debug: getAuthDebug(req)
+    });
   }
 });
 
