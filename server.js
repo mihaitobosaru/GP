@@ -230,6 +230,55 @@ async function hlPost(path, req, payload) {
   return data;
 }
 
+function normalizeArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.Data)) return data.Data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.Results)) return data.Results;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+function extractMemberId(item) {
+  return item?.ContactKey || item?.UserKey || item?.MemberId || item?.Id || item?.id || "";
+}
+
+function mapMembershipStatus(code) {
+  if (code === "A") return "Active";
+  if (code === "I") return "Inactive";
+  if (code === "S") return "Suspended";
+  return code || "";
+}
+
+function pickBestAddress(detail) {
+  const addresses = Array.isArray(detail?.Addresses) ? detail.Addresses : [];
+  if (!addresses.length) return {};
+  const withLocation = addresses.find((a) => a?.City || a?.StateProvinceCode || a?.PostalCode);
+  return withLocation || addresses[0] || {};
+}
+
+function toTableRow(detail) {
+  const addr = pickBestAddress(detail);
+  const createDate = detail?.AgreedToTermsDateTime || "";
+  return {
+    FirstName: detail?.FirstName || "",
+    LastName: detail?.LastName || "",
+    CompanyName: detail?.CompanyName || "",
+    Email: detail?.EmailAddress || "",
+    CompanyTitle: detail?.CompanyTitle || "",
+    City: addr?.City || "",
+    StateProvinceCode: addr?.StateProvinceCode || "",
+    PostalCode: addr?.PostalCode || "",
+    CountryCode: addr?.CountryCode || "",
+    CreateDate: createDate,
+    Member: detail?.IsMember ? "Yes" : "No",
+    Region: addr?.Region || "",
+    CreateDate2: createDate,
+    MembershipLevel: detail?.MembershipLevel || detail?.MemberType || "",
+    MembershipStatus: mapMembershipStatus(detail?.ContactStatusCode)
+  };
+}
+
 app.get("/auth/login", (req, res) => {
   if (!OAUTH_CLIENT_ID) {
     return res.status(500).send("Missing HIGHERLOGIC_OAUTH_CLIENT_ID.");
@@ -466,6 +515,65 @@ app.get("/api/members/:memberId", async (req, res) => {
   }
 });
 
+app.get("/api/communities/:communityId/member-details-table", async (req, res) => {
+  try {
+    const { communityId } = req.params;
+    const membersData = await hlPost(
+      "/higherlogic/external/api/v1.0/Communities/GetCommunityMembers",
+      req,
+      {
+        CommunityKey: communityId,
+        LegacyGroupKey: "",
+        StartRecord: 1,
+        EndRecord: 3000
+      }
+    );
+
+    const members = normalizeArray(membersData);
+    const ids = members
+      .map((member) => extractMemberId(member))
+      .filter(Boolean);
+
+    const rows = [];
+    for (const memberId of ids) {
+      try {
+        const detail = await hlFetch(
+          `/higherlogic/external/api/v1.0/Contacts/GetContact?contactKey=${encodeURIComponent(memberId)}`,
+          req
+        );
+        rows.push(toTableRow(detail));
+      } catch {
+        rows.push({
+          FirstName: "",
+          LastName: "",
+          CompanyName: "",
+          Email: "",
+          CompanyTitle: "",
+          City: "",
+          StateProvinceCode: "",
+          PostalCode: "",
+          CountryCode: "",
+          CreateDate: "",
+          Member: "",
+          Region: "",
+          CreateDate2: "",
+          MembershipLevel: "",
+          MembershipStatus: ""
+        });
+      }
+    }
+
+    res.json({
+      communityId,
+      totalMembers: members.length,
+      detailedMembers: rows.length,
+      rows
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
@@ -580,6 +688,29 @@ app.get("/", (req, res) => {
       color: #4338ca;
       margin-left: 8px;
     }
+    .tableWrap {
+      overflow: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: white;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid #eef2f7;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f9fafb;
+      z-index: 1;
+    }
   </style>
 </head>
 <body>
@@ -603,6 +734,7 @@ app.get("/", (req, res) => {
         <h2>2. Members <span id="memberCount" class="pill" style="display:none;"></span></h2>
         <div class="status">Selected community ID: <strong id="selectedCommunityId">-</strong></div>
         <button id="loadMembersBtn" disabled>Load members</button>
+        <button id="loadMemberTableBtn" disabled>Load member table</button>
         <div id="membersStatus" class="status"></div>
         <div id="membersList" class="list"></div>
       </div>
@@ -615,6 +747,11 @@ app.get("/", (req, res) => {
         <pre id="detailsOutput">No member selected yet.</pre>
       </div>
     </div>
+    <div class="card" style="margin-top:16px;">
+      <h2>4. Community members table</h2>
+      <div id="memberTableStatus" class="status"></div>
+      <div id="memberTableWrap" class="tableWrap"></div>
+    </div>
   </div>
 
   <script>
@@ -622,15 +759,18 @@ app.get("/", (req, res) => {
     const loginBtn = document.getElementById("loginBtn");
     const loadCommunitiesBtn = document.getElementById("loadCommunitiesBtn");
     const loadMembersBtn = document.getElementById("loadMembersBtn");
+    const loadMemberTableBtn = document.getElementById("loadMemberTableBtn");
     const loadMemberDetailsBtn = document.getElementById("loadMemberDetailsBtn");
 
     const communitiesStatus = document.getElementById("communitiesStatus");
     const membersStatus = document.getElementById("membersStatus");
     const detailsStatus = document.getElementById("detailsStatus");
+    const memberTableStatus = document.getElementById("memberTableStatus");
 
     const communitiesList = document.getElementById("communitiesList");
     const membersList = document.getElementById("membersList");
     const detailsOutput = document.getElementById("detailsOutput");
+    const memberTableWrap = document.getElementById("memberTableWrap");
 
     const selectedCommunityIdEl = document.getElementById("selectedCommunityId");
     const selectedMemberIdEl = document.getElementById("selectedMemberId");
@@ -641,6 +781,23 @@ app.get("/", (req, res) => {
     let selectedMemberId = null;
     let communities = [];
     let members = [];
+    const memberTableColumns = [
+      "FirstName",
+      "LastName",
+      "CompanyName",
+      "Email",
+      "CompanyTitle",
+      "City",
+      "StateProvinceCode",
+      "PostalCode",
+      "CountryCode",
+      "CreateDate",
+      "Member",
+      "Region",
+      "CreateDate2",
+      "MembershipLevel",
+      "MembershipStatus"
+    ];
 
     async function refreshAuthStatus() {
       try {
@@ -714,11 +871,14 @@ app.get("/", (req, res) => {
           selectedCommunityIdEl.textContent = id || "-";
           selectedMemberIdEl.textContent = "-";
           loadMembersBtn.disabled = !selectedCommunityId;
+          loadMemberTableBtn.disabled = !selectedCommunityId;
           loadMemberDetailsBtn.disabled = true;
           membersList.innerHTML = "";
           memberCountEl.style.display = "none";
           detailsOutput.textContent = "No member selected yet.";
           detailsStatus.textContent = "";
+          memberTableStatus.textContent = "";
+          memberTableWrap.innerHTML = "";
         };
         communitiesList.appendChild(div);
       });
@@ -745,6 +905,38 @@ app.get("/", (req, res) => {
         };
         membersList.appendChild(div);
       });
+    }
+
+    function renderMemberTable(rows) {
+      memberTableWrap.innerHTML = "";
+      if (!rows.length) {
+        memberTableWrap.textContent = "No member details found.";
+        return;
+      }
+
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      memberTableColumns.forEach((col) => {
+        const th = document.createElement("th");
+        th.textContent = col;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        memberTableColumns.forEach((col) => {
+          const td = document.createElement("td");
+          td.textContent = row[col] ?? "";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      memberTableWrap.appendChild(table);
     }
 
     loadCommunitiesBtn.onclick = async () => {
@@ -815,6 +1007,30 @@ app.get("/", (req, res) => {
         detailsStatus.textContent = "Member details loaded";
       } catch (err) {
         detailsStatus.textContent = "Error: " + err.message;
+      }
+    };
+
+    loadMemberTableBtn.onclick = async () => {
+      if (!selectedCommunityId) return;
+
+      memberTableStatus.textContent = "Loading full member table...";
+      memberTableWrap.innerHTML = "";
+
+      try {
+        const res = await fetch(
+          "/api/communities/" + encodeURIComponent(selectedCommunityId) + "/member-details-table"
+        );
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to load member table");
+        }
+
+        renderMemberTable(Array.isArray(data.rows) ? data.rows : []);
+        memberTableStatus.textContent =
+          "Loaded " + (data.detailedMembers || 0) + " member detail records.";
+      } catch (err) {
+        memberTableStatus.textContent = "Error: " + err.message;
       }
     };
 
