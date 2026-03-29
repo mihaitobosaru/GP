@@ -17,8 +17,8 @@ const OAUTH_SCOPE = (
   process.env.HIGHERLOGIC_OAUTH_SCOPE ||
   "openid profile webapi email role offline_access"
 ).trim();
-const OAUTH_AUTHORIZE_URL = `${BASE_URL}/higherlogic/external/oauth/connect/authorize`;
-const OAUTH_TOKEN_URL = `${BASE_URL}/higherlogic/external/oauth/connect/token`;
+const OAUTH_AUTHORIZE_URL = `https://gpsb02.connectedcommunity.org/higherlogic/external/oauth/connect/authorize`;
+const OAUTH_TOKEN_URL = `https://gpsb02.connectedcommunity.org/higherlogic/external/oauth/connect/token`;
 const OAUTH_REDIRECT_URI = (
   process.env.HIGHERLOGIC_OAUTH_REDIRECT_URI ||
   `http://localhost:${port}/auth/callback`
