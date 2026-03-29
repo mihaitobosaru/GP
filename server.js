@@ -374,12 +374,17 @@ app.get("/api/communities", async (req, res) => {
   try {
     const tokenUsed = getActiveBearerToken(req);
     const source = getTokenSource(req);
+    const outboundHeaders = getHeaders(req);
     console.log("[/api/communities] HLIAMKey:", HLIAM_KEY);
     console.log("[/api/communities] Bearer token used:", tokenUsed);
     console.log("[/api/communities] Token source:", source);
     console.log(
       "[/api/communities] Upstream cookie names:",
       getCookieNamesFromHeader(upstreamCookieHeader)
+    );
+    console.log(
+      "[/api/communities] Outbound cookie names:",
+      getCookieNamesFromHeader(outboundHeaders.Cookie || "")
     );
 
     const data = await hlFetch(
