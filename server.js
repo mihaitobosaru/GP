@@ -16,7 +16,7 @@ app.use(express.json());
 function getHeaders() {
   return {
     Authorization: `Bearer ${BEARER_TOKEN}`,
-    HLIAMKey: HLIAM_KEY,
+    HLIAMKey: 'b9ec0893-8164-0098-c307-0c0e94614b28',
     "Content-Type": "application/json"
   };
 }
