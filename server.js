@@ -130,7 +130,14 @@ function getHeaders(req) {
 }
 
 async function hlFetch(path, req) {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const token = getActiveBearerToken(req);
+  const url = new URL(`${BASE_URL}${path}`);
+  // Match Postman when OAuth2 auth is configured as "Add authorization data to: Request URL".
+  if (token) {
+    url.searchParams.set("access_token", token);
+  }
+
+  const response = await fetch(url.toString(), {
     method: "GET",
     headers: getHeaders(req)
   });
