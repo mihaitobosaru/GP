@@ -273,7 +273,7 @@ function toTableRow(detail) {
     CreateDate: createDate,
     Member: detail?.IsMember ? "Yes" : "No",
     Region: addr?.Region || "",
-    CreateDate2: createDate,
+    UpdatedOn: detail?.UpdatedOn || "",
     MembershipLevel: detail?.MembershipLevel || detail?.MemberType || "",
     MembershipStatus: mapMembershipStatus(detail?.ContactStatusCode)
   };
@@ -556,7 +556,7 @@ app.get("/api/communities/:communityId/member-details-table", async (req, res) =
           CreateDate: "",
           Member: "",
           Region: "",
-          CreateDate2: "",
+          UpdatedOn: "",
           MembershipLevel: "",
           MembershipStatus: ""
         });
@@ -794,7 +794,7 @@ app.get("/", (req, res) => {
       "CreateDate",
       "Member",
       "Region",
-      "CreateDate2",
+      "UpdatedOn",
       "MembershipLevel",
       "MembershipStatus"
     ];
