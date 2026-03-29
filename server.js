@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "node:crypto";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,20 +11,66 @@ const HLIAM_KEY = (
   process.env.HLIAM_KEY ||
   ""
 ).trim();
+const OAUTH_CLIENT_ID = (process.env.HIGHERLOGIC_OAUTH_CLIENT_ID || "").trim();
+const OAUTH_CLIENT_SECRET = (process.env.HIGHERLOGIC_OAUTH_CLIENT_SECRET || "").trim();
+const OAUTH_SCOPE = (
+  process.env.HIGHERLOGIC_OAUTH_SCOPE ||
+  "openid profile webapi email role offline_access"
+).trim();
+const OAUTH_AUTHORIZE_URL = `${BASE_URL}/higherlogic/external/oauth/connect/authorize`;
+const OAUTH_TOKEN_URL = `${BASE_URL}/higherlogic/external/oauth/connect/token`;
+const OAUTH_REDIRECT_URI = (
+  process.env.HIGHERLOGIC_OAUTH_REDIRECT_URI ||
+  `http://localhost:${port}/auth/callback`
+).trim();
+const oauthStateStore = new Map();
+let oauthAccessToken = "";
 
-if (!BEARER_TOKEN || !HLIAM_KEY) {
+if (!HLIAM_KEY) {
   console.error(
-    "Missing required env vars. Set HIGHERLOGIC_BEARER_TOKEN and HIGHERLOGIC_IAM_KEY (or HLIAM_KEY)."
+    "Missing required env var: set HIGHERLOGIC_IAM_KEY (or HLIAM_KEY)."
   );
   process.exit(1);
 }
 
+if (!BEARER_TOKEN && !OAUTH_CLIENT_ID) {
+  console.warn(
+    "No auth credential configured. Set HIGHERLOGIC_BEARER_TOKEN or configure OAuth via HIGHERLOGIC_OAUTH_CLIENT_ID."
+  );
+}
+
 app.use(express.json());
 
+function base64UrlEncode(buffer) {
+  return buffer
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function createPkcePair() {
+  const codeVerifier = base64UrlEncode(crypto.randomBytes(64));
+  const codeChallenge = base64UrlEncode(
+    crypto.createHash("sha256").update(codeVerifier).digest()
+  );
+  return { codeVerifier, codeChallenge };
+}
+
+function getActiveBearerToken() {
+  return oauthAccessToken || BEARER_TOKEN;
+}
+
 function getHeaders() {
+  const token = getActiveBearerToken();
+  if (!token) {
+    throw new Error(
+      "No access token available. Configure HIGHERLOGIC_BEARER_TOKEN or login via /auth/login."
+    );
+  }
   return {
-    Authorization: `Bearer CfDJ8EsVP4rQ1A9IiTVIkDJ7RYZf4JAoIYKNFWAprbCy1kbtY6myo8sCQlj5PBa2l3cpA_sbxvAuZxf30xBi48YXPcph9RWrl1DRTFjTQTFoGKfv2Gqy4md0hrYKKQn2a4LvpVRhe-xlshKLCBjygpXMNq1YT3d0T4WhIZilxGiQEREvYJ-7-svLLGcK1MM6TxYKjJ6J3h75ll0YooU--I9ahb41e7I9fDxGcg4GogpoikVs`,
-    HLIAMKey: 'b9ec0893-8164-0098-c307-0c0e94614b28',
+    Authorization: `Bearer ${token}`,
+    HLIAMKey: HLIAM_KEY,
     "Content-Type": "application/json"
   };
 }
@@ -51,6 +98,98 @@ async function hlFetch(path) {
 
   return data;
 }
+
+app.get("/auth/login", (req, res) => {
+  if (!OAUTH_CLIENT_ID) {
+    return res.status(500).send("Missing HIGHERLOGIC_OAUTH_CLIENT_ID.");
+  }
+
+  const state = crypto.randomUUID();
+  const { codeVerifier, codeChallenge } = createPkcePair();
+  oauthStateStore.set(state, { codeVerifier, createdAt: Date.now() });
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: OAUTH_CLIENT_ID,
+    redirect_uri: OAUTH_REDIRECT_URI,
+    scope: OAUTH_SCOPE,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    state
+  });
+
+  res.redirect(`${OAUTH_AUTHORIZE_URL}?${params.toString()}`);
+});
+
+app.get("/auth/callback", async (req, res) => {
+  const { code, state, error, error_description: errorDescription } = req.query;
+
+  if (error) {
+    return res
+      .status(400)
+      .send(`OAuth error: ${error}${errorDescription ? ` (${errorDescription})` : ""}`);
+  }
+
+  if (!code || !state || !oauthStateStore.has(state)) {
+    return res.status(400).send("Invalid OAuth callback state or missing code.");
+  }
+
+  const { codeVerifier } = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+
+  try {
+    const body = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: String(code),
+      redirect_uri: OAUTH_REDIRECT_URI,
+      client_id: OAUTH_CLIENT_ID,
+      code_verifier: codeVerifier
+    });
+
+    if (OAUTH_CLIENT_SECRET) {
+      body.set("client_secret", OAUTH_CLIENT_SECRET);
+    }
+
+    const tokenResponse = await fetch(OAUTH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+
+    const text = await tokenResponse.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!tokenResponse.ok) {
+      return res
+        .status(500)
+        .send(`Token exchange failed (${tokenResponse.status}): ${JSON.stringify(data)}`);
+    }
+
+    oauthAccessToken = (data.access_token || "").trim();
+    if (!oauthAccessToken) {
+      return res.status(500).send("Token response did not include access_token.");
+    }
+
+    return res.redirect("/?auth=success");
+  } catch (tokenError) {
+    return res.status(500).send(`OAuth callback failed: ${tokenError.message}`);
+  }
+});
+
+app.get("/api/auth/status", (req, res) => {
+  const activeToken = getActiveBearerToken();
+  res.json({
+    authenticated: Boolean(activeToken),
+    source: oauthAccessToken ? "oauth" : (BEARER_TOKEN ? "env" : "none"),
+    hasIamKey: Boolean(HLIAM_KEY),
+    oauthConfigured: Boolean(OAUTH_CLIENT_ID)
+  });
+});
 
 /**
  * Adjust these endpoints if your exact member/member-detail routes differ.
@@ -214,6 +353,10 @@ app.get("/", (req, res) => {
   <div class="wrap">
     <h1>Higher Logic Explorer</h1>
     <div class="sub">Load communities → pick one → load members → pick one → inspect full member details</div>
+    <div class="status">
+      Auth status: <strong id="authStatus">Checking...</strong>
+      <button id="loginBtn" style="margin-left:10px;">Login with Higher Logic</button>
+    </div>
 
     <div class="grid">
       <div class="card">
@@ -242,6 +385,8 @@ app.get("/", (req, res) => {
   </div>
 
   <script>
+    const authStatusEl = document.getElementById("authStatus");
+    const loginBtn = document.getElementById("loginBtn");
     const loadCommunitiesBtn = document.getElementById("loadCommunitiesBtn");
     const loadMembersBtn = document.getElementById("loadMembersBtn");
     const loadMemberDetailsBtn = document.getElementById("loadMemberDetailsBtn");
@@ -263,6 +408,30 @@ app.get("/", (req, res) => {
     let selectedMemberId = null;
     let communities = [];
     let members = [];
+
+    async function refreshAuthStatus() {
+      try {
+        const res = await fetch("/api/auth/status");
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to read auth status");
+        }
+
+        if (data.authenticated) {
+          authStatusEl.textContent = "Authenticated (" + data.source + ")";
+        } else if (data.oauthConfigured) {
+          authStatusEl.textContent = "Not authenticated";
+        } else {
+          authStatusEl.textContent = "No token configured";
+        }
+      } catch (err) {
+        authStatusEl.textContent = "Error: " + err.message;
+      }
+    }
+
+    loginBtn.onclick = () => {
+      window.location.href = "/auth/login";
+    };
 
     function safeArray(data) {
       if (Array.isArray(data)) return data;
@@ -415,6 +584,8 @@ app.get("/", (req, res) => {
         detailsStatus.textContent = "Error: " + err.message;
       }
     };
+
+    refreshAuthStatus();
   </script>
 </body>
 </html>
