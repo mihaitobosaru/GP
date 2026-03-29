@@ -202,9 +202,13 @@ async function hlFetch(path, req) {
 
 async function hlPost(path, req, payload) {
   const url = new URL(`${BASE_URL}${path}`);
+  const headers = {
+    ...getHeaders(req),
+    "Content-Type": "application/json"
+  };
   const response = await fetch(url.toString(), {
     method: "POST",
-    headers: getHeaders(req),
+    headers,
     body: JSON.stringify(payload)
   });
   updateUpstreamCookieJarFromSetCookie(getSetCookieHeaders(response));
