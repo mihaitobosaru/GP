@@ -29,6 +29,7 @@ const oauthStateStore = new Map();
 let oauthAccessToken = "";
 let apiAccessToken = "";
 let upstreamCookieHeader = "";
+const upstreamCookieJar = new Map();
 
 if (!HLIAM_KEY) {
   console.error(
@@ -142,20 +143,26 @@ function getSetCookieHeaders(response) {
   return single ? [single] : [];
 }
 
-function buildCookieHeaderFromSetCookie(setCookieValues) {
-  if (!Array.isArray(setCookieValues) || !setCookieValues.length) return "";
-  return setCookieValues
-    .map((entry) => String(entry).split(";")[0].trim())
-    .filter(Boolean)
-    .join("; ");
-}
-
 function getCookieNamesFromHeader(cookieHeader = "") {
   if (!cookieHeader) return [];
   return cookieHeader
     .split(";")
     .map((pair) => pair.trim().split("=")[0]?.trim())
     .filter(Boolean);
+}
+
+function updateUpstreamCookieJarFromSetCookie(setCookieValues) {
+  if (!Array.isArray(setCookieValues)) return;
+  for (const entry of setCookieValues) {
+    const pair = String(entry).split(";")[0].trim();
+    if (!pair) continue;
+    const [name, ...valueParts] = pair.split("=");
+    if (!name) continue;
+    upstreamCookieJar.set(name.trim(), valueParts.join("="));
+  }
+  upstreamCookieHeader = Array.from(upstreamCookieJar.entries())
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
 }
 
 async function hlFetch(path, req) {
@@ -165,6 +172,7 @@ async function hlFetch(path, req) {
     method: "GET",
     headers: getHeaders(req)
   });
+  updateUpstreamCookieJarFromSetCookie(getSetCookieHeaders(response));
 
   const text = await response.text();
 
@@ -243,6 +251,7 @@ app.get("/auth/callback", async (req, res) => {
       },
       body: body.toString()
     });
+    updateUpstreamCookieJarFromSetCookie(getSetCookieHeaders(tokenResponse));
 
     const text = await tokenResponse.text();
     let data;
@@ -305,7 +314,7 @@ app.get("/auth/callback", async (req, res) => {
     }
 
     const loginSetCookies = getSetCookieHeaders(loginResponse);
-    upstreamCookieHeader = buildCookieHeaderFromSetCookie(loginSetCookies);
+    updateUpstreamCookieJarFromSetCookie(loginSetCookies);
     console.log(
       "[auth/callback] Upstream login cookies captured:",
       loginSetCookies.length
