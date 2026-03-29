@@ -259,6 +259,9 @@ app.get("/auth/callback", async (req, res) => {
       loginData = { raw: loginText };
     }
 
+    console.log("[auth/callback] Authentication/Login status:", loginResponse.status);
+    console.log("[auth/callback] Authentication/Login response:", loginData);
+
     if (!loginResponse.ok) {
       return res.status(500).send(
         `Authentication/Login failed (${loginResponse.status}): ${JSON.stringify(loginData)}`
@@ -266,6 +269,7 @@ app.get("/auth/callback", async (req, res) => {
     }
 
     apiAccessToken = String(extractToken(loginData)).trim();
+    console.log("[auth/callback] Extracted API token length:", apiAccessToken.length);
     if (!apiAccessToken) {
       return res.status(500).send(
         `Authentication/Login succeeded but no API token found in response: ${JSON.stringify(loginData)}`
