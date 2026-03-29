@@ -1,5 +1,17 @@
 import express from "express";
 import crypto from "node:crypto";
+import {
+  openDatabase,
+  replaceAllMemberships,
+  upsertCommunity,
+  upsertUserFromRow,
+  getExistingContactKeys,
+  getStats,
+  setSyncMeta,
+  listUsers,
+  listCommunitiesWithCounts,
+  listMembershipsForCommunity
+} from "./db.mjs";
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -46,6 +58,185 @@ if (!BEARER_TOKEN && !OAUTH_CLIENT_ID) {
 }
 
 app.use(express.json());
+
+const db = openDatabase();
+
+function makeSyncReq(cookieHeader) {
+  return { headers: { cookie: cookieHeader || "" } };
+}
+
+function extractCommunityMeta(item) {
+  const key =
+    item.CommunityKey ||
+    item.Id ||
+    item.CommunityId ||
+    item.id ||
+    item.communityId;
+  const name =
+    item.Name ||
+    item.Title ||
+    item.CommunityName ||
+    item.name ||
+    "Unnamed community";
+  return { key, name };
+}
+
+async function fetchCommunityMemberPairs(hlPostFn, syncReq, communityKey) {
+  const pairs = [];
+  const pageSize = 3000;
+  let start = 1;
+  while (true) {
+    const data = await hlPostFn(
+      "/higherlogic/external/api/v1.0/Communities/GetCommunityMembers",
+      syncReq,
+      {
+        CommunityKey: communityKey,
+        LegacyGroupKey: "",
+        StartRecord: start,
+        EndRecord: start + pageSize - 1
+      }
+    );
+    const members = normalizeArray(data);
+    if (!members.length) break;
+    for (const m of members) {
+      const ck = extractMemberId(m);
+      if (ck) pairs.push([ck, communityKey]);
+    }
+    if (members.length < pageSize) break;
+    start += pageSize;
+  }
+  return pairs;
+}
+
+let syncJobRunning = false;
+const syncState = {
+  running: false,
+  phase: "",
+  communitiesTotal: 0,
+  communitiesDone: 0,
+  membershipsWritten: 0,
+  contactsToFetch: 0,
+  contactsFetched: 0,
+  contactsSkipped: 0,
+  message: "",
+  error: null
+};
+
+async function runFullSync(cookieHeader, refreshAllDetails) {
+  const startedAt = new Date().toISOString();
+  Object.assign(syncState, {
+    running: true,
+    phase: "starting",
+    communitiesTotal: 0,
+    communitiesDone: 0,
+    membershipsWritten: 0,
+    contactsToFetch: 0,
+    contactsFetched: 0,
+    contactsSkipped: 0,
+    message: "Starting…",
+    error: null
+  });
+
+  setSyncMeta(db, {
+    last_sync_started_at: startedAt,
+    last_sync_status: "running",
+    last_sync_error: null
+  });
+
+  const syncReq = makeSyncReq(cookieHeader);
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      32,
+      parseInt(process.env.SYNC_CONTACT_CONCURRENCY || "8", 10)
+    )
+  );
+
+  try {
+    getActiveBearerToken(syncReq);
+
+    syncState.phase = "communities";
+    syncState.message = "Loading communities…";
+    const commData = await hlFetch(
+      "/higherlogic/external/api/v1.0/Communities/GetViewableCommunities?includeStatistics=false",
+      syncReq
+    );
+    const commList = normalizeArray(commData);
+    syncState.communitiesTotal = commList.length;
+
+    const allPairs = [];
+    for (let i = 0; i < commList.length; i++) {
+      const item = commList[i];
+      const { key: communityKey, name } = extractCommunityMeta(item);
+      if (!communityKey) continue;
+      upsertCommunity(db, communityKey, name);
+      syncState.communitiesDone = i + 1;
+      syncState.phase = "members";
+      syncState.message = `Community ${i + 1}/${commList.length}: loading members…`;
+      const pairs = await fetchCommunityMemberPairs(
+        hlPost,
+        syncReq,
+        communityKey
+      );
+      allPairs.push(...pairs);
+    }
+
+    syncState.phase = "linking";
+    syncState.message = "Writing membership links…";
+    replaceAllMemberships(db, allPairs);
+    syncState.membershipsWritten = allPairs.length;
+
+    const uniqueKeys = [...new Set(allPairs.map((p) => p[0]))];
+    const existing = getExistingContactKeys(db);
+    const toFetch = refreshAllDetails
+      ? uniqueKeys
+      : uniqueKeys.filter((k) => !existing.has(k));
+    syncState.contactsSkipped = uniqueKeys.length - toFetch.length;
+    syncState.contactsToFetch = toFetch.length;
+    syncState.contactsFetched = 0;
+
+    syncState.phase = "contacts";
+    syncState.message = `Fetching contact details (${toFetch.length} calls)…`;
+
+    for (let i = 0; i < toFetch.length; i += concurrency) {
+      const batch = toFetch.slice(i, i + concurrency);
+      await Promise.all(
+        batch.map(async (contactKey) => {
+          try {
+            const detail = await hlFetch(
+              `/higherlogic/external/api/v1.0/Contacts/GetContact?contactKey=${encodeURIComponent(contactKey)}`,
+              syncReq
+            );
+            upsertUserFromRow(db, contactKey, toTableRow(detail));
+          } catch (e) {
+            console.error("[sync] GetContact failed", contactKey, e.message);
+          }
+        })
+      );
+      syncState.contactsFetched = Math.min(i + batch.length, toFetch.length);
+    }
+
+    const completedAt = new Date().toISOString();
+    setSyncMeta(db, {
+      last_sync_completed_at: completedAt,
+      last_sync_status: "ok",
+      last_sync_error: null
+    });
+    syncState.phase = "done";
+    syncState.message = "Sync completed.";
+  } catch (e) {
+    syncState.error = e.message;
+    syncState.phase = "error";
+    syncState.message = e.message;
+    setSyncMeta(db, {
+      last_sync_status: "failed",
+      last_sync_error: e.message,
+      last_sync_completed_at: new Date().toISOString()
+    });
+  } finally {
+    syncState.running = false;
+  }
+}
 
 function base64UrlEncode(buffer) {
   return buffer
@@ -574,6 +765,74 @@ app.get("/api/communities/:communityId/member-details-table", async (req, res) =
   }
 });
 
+app.get("/api/sync/status", (req, res) => {
+  res.json({
+    ...syncState,
+    stats: getStats(db)
+  });
+});
+
+app.get("/api/db/stats", (req, res) => {
+  try {
+    res.json(getStats(db));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/db/users", (req, res) => {
+  try {
+    const limit = Math.min(
+      200,
+      Math.max(1, parseInt(req.query.limit || "50", 10))
+    );
+    const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
+    const q = req.query.q || "";
+    res.json(listUsers(db, { limit, offset, q }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/db/communities", (req, res) => {
+  try {
+    res.json(listCommunitiesWithCounts(db));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/db/memberships", (req, res) => {
+  try {
+    const ck = req.query.communityKey || "";
+    if (!ck) {
+      return res.status(400).json({ error: "communityKey query required" });
+    }
+    res.json(listMembershipsForCommunity(db, ck));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/db/sync", (req, res) => {
+  if (syncJobRunning) {
+    return res.status(409).json({ error: "Sync already running" });
+  }
+  const cookieHeader = req.headers.cookie || "";
+  let refreshAll = false;
+  try {
+    refreshAll = Boolean(req.body?.refreshAllDetails);
+    getActiveBearerToken(makeSyncReq(cookieHeader));
+  } catch {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  syncJobRunning = true;
+  runFullSync(cookieHeader, refreshAll).finally(() => {
+    syncJobRunning = false;
+  });
+  res.json({ ok: true, started: true });
+});
+
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
@@ -711,16 +970,60 @@ app.get("/", (req, res) => {
       background: #f9fafb;
       z-index: 1;
     }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .tab {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    .tab.active {
+      background: #111827;
+      color: white;
+    }
+    .tab-panel { display: block; }
+    .tab-panel.hidden { display: none; }
+    .statRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .statBox {
+      background: white;
+      border-radius: 10px;
+      padding: 12px 16px;
+      border: 1px solid #e5e7eb;
+      min-width: 140px;
+    }
+    .statBox strong { display: block; font-size: 22px; }
+    .statBox span { color: #6b7280; font-size: 12px; }
+    .progressLine {
+      font-size: 13px;
+      color: #374151;
+      margin-bottom: 12px;
+      min-height: 20px;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Higher Logic Explorer</h1>
-    <div class="sub">Load communities → pick one → load members → pick one → inspect full member details</div>
+    <div class="sub">Browse communities and sync members to a local database.</div>
+    <div class="tabs">
+      <button type="button" class="tab active" id="tabBtnExplorer">Explorer</button>
+      <button type="button" class="tab" id="tabBtnDatabase">Database</button>
+    </div>
+
     <div class="status">
       Auth status: <strong id="authStatus">Checking...</strong>
       <button id="loginBtn" style="margin-left:10px;">Login with Higher Logic</button>
     </div>
+
+    <div id="panelExplorer" class="tab-panel">
+    <div class="sub" style="margin-top:12px;">Load communities → pick one → load members → pick one → inspect full member details</div>
 
     <div class="grid">
       <div class="card">
@@ -751,6 +1054,45 @@ app.get("/", (req, res) => {
       <h2>4. Community members table</h2>
       <div id="memberTableStatus" class="status"></div>
       <div id="memberTableWrap" class="tableWrap"></div>
+    </div>
+    </div>
+
+    <div id="panelDatabase" class="tab-panel hidden">
+      <div class="card">
+        <h2>Database sync</h2>
+        <p class="muted" style="margin-top:0;">Fetches all communities, all members per community, then contact details only for users not yet stored (unless you refresh all).</p>
+        <div class="statRow" id="dbStatsRow">
+          <div class="statBox"><span>Communities</span><strong id="dbStatCommunities">0</strong></div>
+          <div class="statBox"><span>Unique users</span><strong id="dbStatUsers">0</strong></div>
+          <div class="statBox"><span>Membership links</span><strong id="dbStatLinks">0</strong></div>
+          <div class="statBox"><span>Last sync completed</span><strong id="dbStatLastSync" style="font-size:14px;">—</strong></div>
+        </div>
+        <label class="muted" style="display:block;margin-bottom:8px;">
+          <input type="checkbox" id="syncRefreshAll" /> Refresh all contact details (slow; re-fetches every user)
+        </label>
+        <button type="button" id="dbSyncBtn">Re-sync now</button>
+        <div id="dbSyncProgress" class="progressLine"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Communities in database</h2>
+        <div id="dbCommunitiesStatus" class="status"></div>
+        <div id="dbCommunitiesWrap" class="tableWrap"></div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h2>Users in database</h2>
+        <div style="margin-bottom:10px;">
+          <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+        </div>
+        <div id="dbUsersStatus" class="status"></div>
+        <div id="dbUsersWrap" class="tableWrap"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+          <button type="button" id="dbUsersPrev" disabled>Previous</button>
+          <span id="dbUsersPage" class="muted"></span>
+          <button type="button" id="dbUsersNext" disabled>Next</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -798,6 +1140,264 @@ app.get("/", (req, res) => {
       "MembershipLevel",
       "MembershipStatus"
     ];
+
+    const tabBtnExplorer = document.getElementById("tabBtnExplorer");
+    const tabBtnDatabase = document.getElementById("tabBtnDatabase");
+    const panelExplorer = document.getElementById("panelExplorer");
+    const panelDatabase = document.getElementById("panelDatabase");
+    const dbSyncBtn = document.getElementById("dbSyncBtn");
+    const dbSyncProgress = document.getElementById("dbSyncProgress");
+    const dbCommunitiesWrap = document.getElementById("dbCommunitiesWrap");
+    const dbCommunitiesStatus = document.getElementById("dbCommunitiesStatus");
+    const dbUsersWrap = document.getElementById("dbUsersWrap");
+    const dbUsersStatus = document.getElementById("dbUsersStatus");
+    const dbUserSearch = document.getElementById("dbUserSearch");
+    const dbUsersPrev = document.getElementById("dbUsersPrev");
+    const dbUsersNext = document.getElementById("dbUsersNext");
+    const dbUsersPage = document.getElementById("dbUsersPage");
+
+    let dbUsersOffset = 0;
+    const dbUsersLimit = 50;
+    let syncPollTimer = null;
+
+    function showTab(which) {
+      if (which === "explorer") {
+        panelExplorer.classList.remove("hidden");
+        panelDatabase.classList.add("hidden");
+        tabBtnExplorer.classList.add("active");
+        tabBtnDatabase.classList.remove("active");
+      } else {
+        panelExplorer.classList.add("hidden");
+        panelDatabase.classList.remove("hidden");
+        tabBtnExplorer.classList.remove("active");
+        tabBtnDatabase.classList.add("active");
+        loadDbStats();
+        loadDbCommunities();
+        dbUsersOffset = 0;
+        loadDbUsersPage();
+      }
+    }
+
+    tabBtnExplorer.onclick = () => showTab("explorer");
+    tabBtnDatabase.onclick = () => showTab("database");
+
+    async function loadDbStats() {
+      try {
+        const res = await fetch("/api/db/stats");
+        const s = await res.json();
+        if (!res.ok) throw new Error(s.error || "stats failed");
+        document.getElementById("dbStatCommunities").textContent = s.communities;
+        document.getElementById("dbStatUsers").textContent = s.users;
+        document.getElementById("dbStatLinks").textContent = s.memberships;
+        document.getElementById("dbStatLastSync").textContent =
+          s.lastSyncCompletedAt || "—";
+      } catch (e) {
+        document.getElementById("dbStatLastSync").textContent = "Error";
+      }
+    }
+
+    function renderDbCommunitiesTable(rows) {
+      dbCommunitiesWrap.innerHTML = "";
+      if (!rows.length) {
+        dbCommunitiesWrap.textContent = "No communities synced yet.";
+        return;
+      }
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      ["Name", "Community key", "Members", "Synced at"].forEach((h) => {
+        const th = document.createElement("th");
+        th.textContent = h;
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      rows.forEach((r) => {
+        const tr = document.createElement("tr");
+        [r.name, r.community_key, r.member_count, r.synced_at || ""].forEach(
+          (cell) => {
+            const td = document.createElement("td");
+            td.textContent = cell == null ? "" : String(cell);
+            tr.appendChild(td);
+          }
+        );
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      dbCommunitiesWrap.appendChild(table);
+    }
+
+    async function loadDbCommunities() {
+      dbCommunitiesStatus.textContent = "Loading…";
+      try {
+        const res = await fetch("/api/db/communities");
+        const rows = await res.json();
+        if (!res.ok) throw new Error(rows.error || "failed");
+        renderDbCommunitiesTable(Array.isArray(rows) ? rows : []);
+        dbCommunitiesStatus.textContent = "";
+      } catch (e) {
+        dbCommunitiesStatus.textContent = "Error: " + e.message;
+      }
+    }
+
+    function renderDbUsersTable(rows) {
+      dbUsersWrap.innerHTML = "";
+      if (!rows.length) {
+        dbUsersWrap.textContent = "No users.";
+        return;
+      }
+      const cols = [
+        "first_name",
+        "last_name",
+        "email",
+        "company_name",
+        "city",
+        "updated_on",
+        "contact_key"
+      ];
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      cols.forEach((c) => {
+        const th = document.createElement("th");
+        th.textContent = c;
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      rows.forEach((r) => {
+        const tr = document.createElement("tr");
+        cols.forEach((c) => {
+          const td = document.createElement("td");
+          td.textContent = r[c] == null ? "" : String(r[c]);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      dbUsersWrap.appendChild(table);
+    }
+
+    async function loadDbUsersPage() {
+      dbUsersStatus.textContent = "Loading…";
+      const q = (dbUserSearch && dbUserSearch.value) || "";
+      try {
+        const res = await fetch(
+          "/api/db/users?limit=" +
+            dbUsersLimit +
+            "&offset=" +
+            dbUsersOffset +
+            "&q=" +
+            encodeURIComponent(q)
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "failed");
+        renderDbUsersTable(data.rows || []);
+        const total = data.total || 0;
+        dbUsersPage.textContent =
+          "Showing " +
+          (dbUsersOffset + 1) +
+          "–" +
+          Math.min(dbUsersOffset + dbUsersLimit, total) +
+          " of " +
+          total;
+        dbUsersPrev.disabled = dbUsersOffset <= 0;
+        dbUsersNext.disabled = dbUsersOffset + dbUsersLimit >= total;
+        dbUsersStatus.textContent = "";
+      } catch (e) {
+        dbUsersStatus.textContent = "Error: " + e.message;
+      }
+    }
+
+    dbUsersPrev.onclick = () => {
+      dbUsersOffset = Math.max(0, dbUsersOffset - dbUsersLimit);
+      loadDbUsersPage();
+    };
+    dbUsersNext.onclick = () => {
+      dbUsersOffset += dbUsersLimit;
+      loadDbUsersPage();
+    };
+
+    let searchDebounce = null;
+    if (dbUserSearch) {
+      dbUserSearch.addEventListener("input", () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+          dbUsersOffset = 0;
+          loadDbUsersPage();
+        }, 400);
+      });
+    }
+
+    function startSyncPoll() {
+      if (syncPollTimer) clearInterval(syncPollTimer);
+      syncPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch("/api/sync/status");
+          const s = await res.json();
+          if (s.running) {
+            dbSyncProgress.textContent =
+              (s.phase || "") +
+              ": " +
+              (s.message || "") +
+              " — communities " +
+              (s.communitiesDone || 0) +
+              "/" +
+              (s.communitiesTotal || 0) +
+              ", contacts " +
+              (s.contactsFetched || 0) +
+              "/" +
+              (s.contactsToFetch || 0) +
+              (s.contactsSkipped ? " (skipped " + s.contactsSkipped + ")" : "");
+          } else {
+            dbSyncProgress.textContent = s.error
+              ? "Error: " + s.error
+              : "Idle. Last completed: " +
+                (s.stats && s.stats.lastSyncCompletedAt
+                  ? s.stats.lastSyncCompletedAt
+                  : "—");
+            clearInterval(syncPollTimer);
+            syncPollTimer = null;
+            loadDbStats();
+            loadDbCommunities();
+            dbUsersOffset = 0;
+            loadDbUsersPage();
+          }
+        } catch {
+          clearInterval(syncPollTimer);
+          syncPollTimer = null;
+        }
+      }, 1000);
+    }
+
+    if (dbSyncBtn) {
+      dbSyncBtn.onclick = async () => {
+        const refreshAll = document.getElementById("syncRefreshAll").checked;
+        dbSyncProgress.textContent = "Starting…";
+        try {
+          const res = await fetch("/api/db/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refreshAllDetails: refreshAll })
+          });
+          const data = await res.json();
+          if (res.status === 409) {
+            dbSyncProgress.textContent = data.error || "Already running";
+            startSyncPoll();
+            return;
+          }
+          if (!res.ok) {
+            dbSyncProgress.textContent = data.error || "Failed";
+            return;
+          }
+          startSyncPoll();
+        } catch (e) {
+          dbSyncProgress.textContent = "Error: " + e.message;
+        }
+      };
+    }
 
     async function refreshAuthStatus() {
       try {
