@@ -126,8 +126,7 @@ function getHeaders(req) {
   }
   const headers = {
     Authorization: `Bearer ${token}`,
-    HLIAMKey: HLIAM_KEY,
-    "Content-Type": "application/json"
+    HLIAMKey: HLIAM_KEY
   };
   if (upstreamCookieHeader) {
     headers.Cookie = upstreamCookieHeader;
@@ -152,12 +151,7 @@ function buildCookieHeaderFromSetCookie(setCookieValues) {
 }
 
 async function hlFetch(path, req) {
-  const token = getActiveBearerToken(req);
   const url = new URL(`${BASE_URL}${path}`);
-  // Match Postman when OAuth2 auth is configured as "Add authorization data to: Request URL".
-  if (token) {
-    url.searchParams.set("access_token", token);
-  }
 
   const response = await fetch(url.toString(), {
     method: "GET",
