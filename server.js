@@ -206,7 +206,10 @@ app.get("/auth/callback", async (req, res) => {
 
     const tokenResponse = await fetch(OAUTH_TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        HLIAMKey: HLIAM_KEY
+      },
       body: body.toString()
     });
 
