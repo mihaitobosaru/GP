@@ -200,6 +200,32 @@ async function hlFetch(path, req) {
   return data;
 }
 
+async function hlPost(path, req, payload) {
+  const url = new URL(`${BASE_URL}${path}`);
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: getHeaders(req),
+    body: JSON.stringify(payload)
+  });
+  updateUpstreamCookieJarFromSetCookie(getSetCookieHeaders(response));
+
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Higher Logic error ${response.status}: ${JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
+
 app.get("/auth/login", (req, res) => {
   if (!OAUTH_CLIENT_ID) {
     return res.status(500).send("Missing HIGHERLOGIC_OAUTH_CLIENT_ID.");
@@ -404,9 +430,15 @@ app.get("/api/communities/:communityId/members", async (req, res) => {
   try {
     const { communityId } = req.params;
 
-    const data = await hlFetch(
-      `/higherlogic/external/api/v1.0/Communities/${communityId}/Members`,
-      req
+    const data = await hlPost(
+      "/higherlogic/external/api/v1.0/Communities/GetCommunityMembers",
+      req,
+      {
+        CommunityKey: communityId,
+        LegacyGroupKey: "",
+        StartRecord: 1,
+        EndRecord: 3000
+      }
     );
 
     res.json(data);
