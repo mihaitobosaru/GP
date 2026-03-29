@@ -80,25 +80,33 @@
         <div id="memberUpdatesProgress" class="progressLine"></div>
       </div>
 
-      <div class="card" style="margin-top:16px;">
-        <h2>Communities in database</h2>
-        <div id="dbCommunitiesStatus" class="status"></div>
-        <div id="dbCommunitiesWrap" class="tableWrap"></div>
+      <div class="card db-collapsible" style="margin-top:16px;">
+        <details class="db-details">
+          <summary class="db-details-summary">Communities in database</summary>
+          <div class="db-details-body">
+            <div id="dbCommunitiesStatus" class="status"></div>
+            <div id="dbCommunitiesWrap" class="tableWrap"></div>
+          </div>
+        </details>
       </div>
 
-      <div class="card" style="margin-top:16px;">
-        <h2>Users in database</h2>
-        <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Sorted by <strong>updated_on</strong> (newest first; blank dates last). Use paging below; default page size is 100 rows.</p>
-        <div style="margin-bottom:10px;">
-          <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
-        </div>
-        <div id="dbUsersStatus" class="status"></div>
-        <div id="dbUsersWrap" class="tableWrap"></div>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-          <button type="button" id="dbUsersPrev" disabled>Previous</button>
-          <span id="dbUsersPage" class="muted"></span>
-          <button type="button" id="dbUsersNext" disabled>Next</button>
-        </div>
+      <div class="card db-collapsible" style="margin-top:16px;">
+        <details class="db-details">
+          <summary class="db-details-summary">Users in database</summary>
+          <div class="db-details-body">
+            <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Click a column header to sort the <strong>full result set</strong> (server-side); use paging below (100 rows per page).</p>
+            <div style="margin-bottom:10px;">
+              <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+            </div>
+            <div id="dbUsersStatus" class="status"></div>
+            <div id="dbUsersWrap" class="tableWrap"></div>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+              <button type="button" id="dbUsersPrev" disabled>Previous</button>
+              <span id="dbUsersPage" class="muted"></span>
+              <button type="button" id="dbUsersNext" disabled>Next</button>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   </div>

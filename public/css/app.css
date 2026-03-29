@@ -222,3 +222,38 @@ th.sort-desc::after {
   margin-bottom: 12px;
   min-height: 20px;
 }
+
+/* Collapsible database sections */
+.db-collapsible .db-details {
+  margin: 0;
+}
+
+.db-details-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+  padding: 0 0 4px 0;
+  user-select: none;
+}
+
+.db-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.db-details-summary::before {
+  content: "\25B6   ";
+  font-size: 11px;
+  opacity: 0.55;
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+details[open] > .db-details-summary::before {
+  transform: rotate(90deg);
+}
+
+.db-details-body {
+  padding-top: 8px;
+}

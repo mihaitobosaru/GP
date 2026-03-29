@@ -852,11 +852,19 @@ app.get("/api/db/users", (req, res) => {
     );
     const offset = Math.max(0, parseInt(req.query.offset || "0", 10));
     const q = req.query.q || "";
-    const { rows, total } = listUsers(db, { limit, offset, q });
+    const sortBy = String(req.query.sort || "updated_on").trim();
+    const sortDir =
+      String(req.query.dir || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+    const { rows, total, sortBy: appliedSort, sortDir: appliedDir } = listUsers(
+      db,
+      { limit, offset, q, sortBy, sortDir }
+    );
     const stats = getStats(db);
     res.json({
       rows,
       total,
+      sortBy: appliedSort,
+      sortDir: appliedDir,
       lastGlobalSyncCompleted: stats.lastSyncCompletedAt,
       lastGlobalSyncStarted: stats.lastSyncStartedAt,
       contactsMissingDetails: stats.contactsMissingDetails

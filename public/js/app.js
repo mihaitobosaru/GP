@@ -61,6 +61,29 @@ const dbUsersPage = document.getElementById("dbUsersPage");
 
 let dbUsersOffset = 0;
 const dbUsersLimit = 100;
+/** Column keys that map to server-side ORDER BY (see db.mjs USER_SORT_EXPR). */
+const DB_USER_SORTABLE = new Set([
+  "contact_key",
+  "first_name",
+  "last_name",
+  "company_name",
+  "email",
+  "company_title",
+  "city",
+  "state_province_code",
+  "postal_code",
+  "country_code",
+  "region",
+  "create_date",
+  "updated_on",
+  "is_member",
+  "membership_level",
+  "membership_status",
+  "db_updated_at",
+  "communities_list"
+]);
+let dbUsersSortBy = "updated_on";
+let dbUsersSortDir = "desc";
 let syncPollTimer = null;
 
 function showTab(which) {
@@ -207,6 +230,32 @@ function renderDbUsersTable(rows, meta) {
   cols.forEach((c) => {
     const th = document.createElement("th");
     th.textContent = c;
+    if (DB_USER_SORTABLE.has(c)) {
+      th.classList.add("sortable");
+      th.setAttribute("role", "button");
+      th.tabIndex = 0;
+      th.title = "Sort entire database by this column";
+      if (c === dbUsersSortBy) {
+        th.classList.add(dbUsersSortDir === "asc" ? "sort-asc" : "sort-desc");
+      }
+      const runSort = () => {
+        if (dbUsersSortBy === c) {
+          dbUsersSortDir = dbUsersSortDir === "asc" ? "desc" : "asc";
+        } else {
+          dbUsersSortBy = c;
+          dbUsersSortDir = "asc";
+        }
+        dbUsersOffset = 0;
+        loadDbUsersPage();
+      };
+      th.addEventListener("click", runSort);
+      th.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          runSort();
+        }
+      });
+    }
     hr.appendChild(th);
   });
   thead.appendChild(hr);
@@ -234,23 +283,24 @@ function renderDbUsersTable(rows, meta) {
   });
   table.appendChild(tbody);
   dbUsersWrap.appendChild(table);
-  initSortableTable(table);
 }
 
 async function loadDbUsersPage() {
   dbUsersStatus.textContent = "Loading…";
   const q = (dbUserSearch && dbUserSearch.value) || "";
   try {
-    const res = await fetch(
-      "/api/db/users?limit=" +
-        dbUsersLimit +
-        "&offset=" +
-        dbUsersOffset +
-        "&q=" +
-        encodeURIComponent(q)
-    );
+    const params = new URLSearchParams({
+      limit: String(dbUsersLimit),
+      offset: String(dbUsersOffset),
+      q,
+      sort: dbUsersSortBy,
+      dir: dbUsersSortDir
+    });
+    const res = await fetch("/api/db/users?" + params.toString());
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "failed");
+    if (data.sortBy) dbUsersSortBy = data.sortBy;
+    if (data.sortDir) dbUsersSortDir = data.sortDir;
     const meta = {
       lastGlobalSyncCompleted: data.lastGlobalSyncCompleted || "",
       lastGlobalSyncStarted: data.lastGlobalSyncStarted || "",

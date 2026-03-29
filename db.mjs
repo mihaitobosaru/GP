@@ -370,7 +370,60 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
   return stats;
 }
 
-export function listUsers(db, { limit = 50, offset = 0, q = "" }) {
+/** Whitelist keys for ORDER BY (SQL fragments; no user-controlled identifiers). */
+const USER_SORT_EXPR = {
+  contact_key: "u.contact_key",
+  first_name: "u.first_name COLLATE NOCASE",
+  last_name: "u.last_name COLLATE NOCASE",
+  company_name: "u.company_name COLLATE NOCASE",
+  email: "u.email COLLATE NOCASE",
+  company_title: "u.company_title COLLATE NOCASE",
+  city: "u.city COLLATE NOCASE",
+  state_province_code: "u.state_province_code COLLATE NOCASE",
+  postal_code: "u.postal_code COLLATE NOCASE",
+  country_code: "u.country_code COLLATE NOCASE",
+  region: "u.region COLLATE NOCASE",
+  create_date: "u.create_date",
+  updated_on: "u.updated_on",
+  is_member: "u.is_member",
+  membership_level: "u.membership_level COLLATE NOCASE",
+  membership_status: "u.membership_status COLLATE NOCASE",
+  db_updated_at: "u.db_updated_at",
+  communities_list: `(SELECT GROUP_CONCAT(c.name, ' | ') FROM user_communities uc INNER JOIN communities c ON c.community_key = uc.community_key WHERE uc.contact_key = u.contact_key)`
+};
+
+const USER_SORT_TIE = "u.last_name COLLATE NOCASE, u.first_name COLLATE NOCASE";
+
+function buildUserOrderBy(sortBy, sortDir) {
+  const tie = USER_SORT_TIE;
+  const d = sortDir === "asc" ? "asc" : "desc";
+  if (sortBy === "updated_on" || sortBy === "db_updated_at" || sortBy === "create_date") {
+    const col =
+      sortBy === "updated_on"
+        ? "u.updated_on"
+        : sortBy === "db_updated_at"
+          ? "u.db_updated_at"
+          : "u.create_date";
+    if (sortDir === "desc") {
+      return `(${col} IS NULL), ${col} DESC, ${tie}`;
+    }
+    return `(${col} IS NOT NULL), ${col} ASC, ${tie}`;
+  }
+  const expr = USER_SORT_EXPR[sortBy];
+  const dirSql = d === "asc" ? "ASC" : "DESC";
+  return `${expr} ${dirSql}, ${tie}`;
+}
+
+export function listUsers(
+  db,
+  {
+    limit = 50,
+    offset = 0,
+    q = "",
+    sortBy = "updated_on",
+    sortDir = "desc"
+  } = {}
+) {
   const search = `%${(q || "").trim()}%`;
   const hasQ = Boolean((q || "").trim());
   const base = hasQ
@@ -382,11 +435,18 @@ export function listUsers(db, { limit = 50, offset = 0, q = "" }) {
   const count = hasQ
     ? db.prepare(countSql).get(search, search, search, search, search).n
     : db.prepare(countSql).get().n;
-  const selectSql = `SELECT u.*, ${usersCommunitiesSubquery} ${base} ORDER BY (u.updated_on IS NULL), u.updated_on DESC, u.last_name, u.first_name LIMIT ? OFFSET ?`;
+  let sb = String(sortBy || "").trim();
+  let sd = String(sortDir || "").toLowerCase() === "asc" ? "asc" : "desc";
+  if (!USER_SORT_EXPR[sb]) {
+    sb = "updated_on";
+    sd = "desc";
+  }
+  const orderBy = buildUserOrderBy(sb, sd);
+  const selectSql = `SELECT u.*, ${usersCommunitiesSubquery} ${base} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
   const rows = hasQ
     ? db.prepare(selectSql).all(search, search, search, search, search, limit, offset)
     : db.prepare(selectSql).all(limit, offset);
-  return { rows, total: count };
+  return { rows, total: count, sortBy: sb, sortDir: sd };
 }
 
 export function listCommunitiesWithCounts(db) {
