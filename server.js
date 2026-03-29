@@ -189,6 +189,7 @@ app.get("/api/auth/status", (req, res) => {
     hasIamKey: Boolean(HLIAM_KEY),
     oauthConfigured: Boolean(OAUTH_CLIENT_ID)
   });
+  console.log(`Active token: ${activeToken}`);
 });
 
 /**
