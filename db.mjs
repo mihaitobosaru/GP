@@ -220,6 +220,156 @@ const usersCommunitiesSubquery = `
    INNER JOIN communities c ON c.community_key = uc.community_key
    WHERE uc.contact_key = u.contact_key) AS communities_list`;
 
+export function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function splitDisplayName(name) {
+  const s = String(name || "").trim();
+  if (!s) return { firstName: "", lastName: "" };
+  const i = s.indexOf(" ");
+  if (i <= 0) return { firstName: "", lastName: s };
+  return { firstName: s.slice(0, i), lastName: s.slice(i + 1).trim() };
+}
+
+export function getContactKeyByEmail(db, email) {
+  const n = normalizeEmail(email);
+  if (!n) return null;
+  const row = db
+    .prepare("SELECT contact_key FROM users WHERE lower(trim(email)) = ?")
+    .get(n);
+  return row?.contact_key ?? null;
+}
+
+/** Prefer existing community row; otherwise create stub with Integration ID as key when present. */
+export function resolveCommunityKeyForUpdate(
+  db,
+  communityIntegrationId,
+  communityName
+) {
+  const id = String(communityIntegrationId || "").trim();
+  const name = String(communityName || "").trim();
+  if (id) {
+    const byKey = db
+      .prepare("SELECT community_key FROM communities WHERE community_key = ?")
+      .get(id);
+    if (byKey) return byKey.community_key;
+  }
+  if (name) {
+    const byName = db
+      .prepare(
+        "SELECT community_key FROM communities WHERE lower(trim(name)) = lower(?)"
+      )
+      .get(name);
+    if (byName) return byName.community_key;
+  }
+  if (id) {
+    upsertCommunity(db, id, name || id);
+    return id;
+  }
+  return null;
+}
+
+/**
+ * Apply GetCommunityMemberUpdates payloads: only rows whose EmailAddress matches
+ * an existing users.email get updated; community links are adjusted when a community key can be resolved.
+ */
+export function applyCommunityMemberUpdates(db, { communityJoins, communityRemovals }) {
+  const joins = Array.isArray(communityJoins) ? communityJoins : [];
+  const removals = Array.isArray(communityRemovals) ? communityRemovals : [];
+  const stats = {
+    usersTouchedJoins: 0,
+    usersTouchedRemovals: 0,
+    linksAdded: 0,
+    linksRemoved: 0,
+    skippedNoEmail: 0,
+    skippedNotInDb: 0
+  };
+  const now = new Date().toISOString();
+  const upd = db.prepare(
+    `UPDATE users SET
+      first_name = ?,
+      last_name = ?,
+      company_name = ?,
+      updated_on = ?,
+      db_updated_at = ?
+     WHERE contact_key = ?`
+  );
+  const insLink = db.prepare(
+    `INSERT OR IGNORE INTO user_communities (contact_key, community_key, linked_at)
+     VALUES (?, ?, ?)`
+  );
+  const delLink = db.prepare(
+    `DELETE FROM user_communities WHERE contact_key = ? AND community_key = ?`
+  );
+
+  for (const j of joins) {
+    const email = normalizeEmail(j.EmailAddress);
+    if (!email) {
+      stats.skippedNoEmail++;
+      continue;
+    }
+    const ck = getContactKeyByEmail(db, email);
+    if (!ck) {
+      stats.skippedNotInDb++;
+      continue;
+    }
+    const { firstName, lastName } = splitDisplayName(j.Name);
+    upd.run(
+      firstName,
+      lastName,
+      String(j.CompanyName || "").trim(),
+      j.JoinDate || now,
+      now,
+      ck
+    );
+    stats.usersTouchedJoins++;
+    const commKey = resolveCommunityKeyForUpdate(
+      db,
+      j.CommunityIntegrationID,
+      j.CommunityName
+    );
+    if (commKey) {
+      const info = insLink.run(ck, commKey, j.JoinDate || now);
+      if (info.changes > 0) stats.linksAdded++;
+    }
+  }
+
+  for (const r of removals) {
+    const email = normalizeEmail(r.EmailAddress);
+    if (!email) {
+      stats.skippedNoEmail++;
+      continue;
+    }
+    const ck = getContactKeyByEmail(db, email);
+    if (!ck) {
+      stats.skippedNotInDb++;
+      continue;
+    }
+    const { firstName, lastName } = splitDisplayName(r.Name);
+    upd.run(
+      firstName,
+      lastName,
+      String(r.CompanyName || "").trim(),
+      r.RemoveDate || now,
+      now,
+      ck
+    );
+    stats.usersTouchedRemovals++;
+    const commKey = resolveCommunityKeyForUpdate(
+      db,
+      r.CommunityIntegrationID,
+      r.CommunityName
+    );
+    if (commKey) {
+      const info = delLink.run(ck, commKey);
+      if (info.changes > 0) stats.linksRemoved++;
+    }
+  }
+
+  return stats;
+}
+
 export function listUsers(db, { limit = 50, offset = 0, q = "" }) {
   const search = `%${(q || "").trim()}%`;
   const hasQ = Boolean((q || "").trim());
@@ -232,7 +382,7 @@ export function listUsers(db, { limit = 50, offset = 0, q = "" }) {
   const count = hasQ
     ? db.prepare(countSql).get(search, search, search, search, search).n
     : db.prepare(countSql).get().n;
-  const selectSql = `SELECT u.*, ${usersCommunitiesSubquery} ${base} ORDER BY u.last_name, u.first_name LIMIT ? OFFSET ?`;
+  const selectSql = `SELECT u.*, ${usersCommunitiesSubquery} ${base} ORDER BY (u.updated_on IS NULL), u.updated_on DESC, u.last_name, u.first_name LIMIT ? OFFSET ?`;
   const rows = hasQ
     ? db.prepare(selectSql).all(search, search, search, search, search, limit, offset)
     : db.prepare(selectSql).all(limit, offset);

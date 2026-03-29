@@ -366,6 +366,37 @@ if (dbSyncBtn) {
   };
 }
 
+const dbMemberUpdatesBtn = document.getElementById("dbMemberUpdatesBtn");
+const memberUpdatesProgress = document.getElementById("memberUpdatesProgress");
+
+if (dbMemberUpdatesBtn && memberUpdatesProgress) {
+  dbMemberUpdatesBtn.onclick = async () => {
+    const daysRaw = document.getElementById("memberUpdatesDays")?.value || "60";
+    const days = Math.min(366, Math.max(1, parseInt(daysRaw, 10) || 60));
+    memberUpdatesProgress.textContent = "Loading…";
+    try {
+      const res = await fetch("/api/db/member-updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "failed");
+      const a = data.applied;
+      memberUpdatesProgress.textContent =
+        `API: ${data.api.joinCount} joins, ${data.api.removalCount} removals. ` +
+        `DB: touched ${a.usersTouchedJoins} join rows / ${a.usersTouchedRemovals} removal rows; ` +
+        `links +${a.linksAdded} −${a.linksRemoved}; ` +
+        `skipped (not in DB) ${a.skippedNotInDb}, (no email) ${a.skippedNoEmail}`;
+      loadDbStats();
+      loadDbCommunities();
+      loadDbUsersPage();
+    } catch (e) {
+      memberUpdatesProgress.textContent = "Error: " + e.message;
+    }
+  };
+}
+
 async function refreshAuthStatus() {
   try {
     const res = await fetch("/api/auth/status");

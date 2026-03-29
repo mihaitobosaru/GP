@@ -72,6 +72,12 @@
         </label>
         <button type="button" id="dbSyncBtn">Re-sync now</button>
         <div id="dbSyncProgress" class="progressLine"></div>
+        <p class="muted" style="margin-top:16px;margin-bottom:8px;">Higher Logic <code>GetCommunityMemberUpdates</code> (v2): loads join/removal events for a window, then updates <strong>existing</strong> users whose <code>EmailAddress</code> matches <code>users.email</code> (name, company, <code>updated_on</code>). Community links are added/removed when a community key can be resolved (integration ID or name).</p>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
+          Past days <input type="number" id="memberUpdatesDays" min="1" max="366" value="60" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
+        </label>
+        <button type="button" id="dbMemberUpdatesBtn">Apply member updates</button>
+        <div id="memberUpdatesProgress" class="progressLine"></div>
       </div>
 
       <div class="card" style="margin-top:16px;">
@@ -82,7 +88,7 @@
 
       <div class="card" style="margin-top:16px;">
         <h2>Users in database</h2>
-        <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Use paging below; default page size is 100 rows.</p>
+        <p class="muted" style="margin-top:0;">All user columns from SQLite, plus <strong>communities_list</strong> (names) and global sync times. Sorted by <strong>updated_on</strong> (newest first; blank dates last). Use paging below; default page size is 100 rows.</p>
         <div style="margin-bottom:10px;">
           <input type="search" id="dbUserSearch" placeholder="Search name, email, key…" style="width:100%;max-width:320px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
         </div>

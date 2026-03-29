@@ -14,7 +14,8 @@ import {
   setSyncMeta,
   listUsers,
   listCommunitiesWithCounts,
-  listMembershipsForCommunity
+  listMembershipsForCommunity,
+  applyCommunityMemberUpdates
 } from "./db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -902,6 +903,59 @@ app.post("/api/db/sync", (req, res) => {
     syncJobRunning = false;
   });
   res.json({ ok: true, started: true });
+});
+
+app.post("/api/db/member-updates", async (req, res) => {
+  const cookieHeader = req.headers.cookie || "";
+  try {
+    getActiveBearerToken(makeSyncReq(cookieHeader));
+  } catch {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  const days = Math.min(
+    366,
+    Math.max(1, parseInt(String(req.body?.days ?? 60), 10))
+  );
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - days * 86400000);
+  const payload = {
+    StartDate: startDate.toISOString(),
+    EndDate: endDate.toISOString()
+  };
+  const syncReq = makeSyncReq(cookieHeader);
+  try {
+    getActiveBearerToken(syncReq);
+    const data = await hlPost(
+      "/higherlogic/external/api/v2.0/System/GetCommunityMemberUpdates",
+      syncReq,
+      payload
+    );
+    const joins = Array.isArray(data.CommunityJoins)
+      ? data.CommunityJoins
+      : [];
+    const removals = Array.isArray(data.CommunityRemovals)
+      ? data.CommunityRemovals
+      : [];
+    const applied = applyCommunityMemberUpdates(db, {
+      communityJoins: joins,
+      communityRemovals: removals
+    });
+    res.json({
+      ok: true,
+      range: {
+        days,
+        startDate: payload.StartDate,
+        endDate: payload.EndDate
+      },
+      api: {
+        joinCount: data.JoinCount ?? joins.length,
+        removalCount: data.RemovalCount ?? removals.length
+      },
+      applied
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get("/health", (req, res) => {
