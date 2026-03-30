@@ -89,6 +89,9 @@ let dbUsersSortDir = "desc";
 let syncPollTimer = null;
 
 const memberUpdatesDefaultColumns = [
+  "first_name",
+  "last_name",
+  "company_name",
   "email",
   "company_title",
   "city",

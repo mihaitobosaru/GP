@@ -117,6 +117,9 @@ function buildHubspotSyncRows(userRows, membershipsByContact) {
     const communitySet = membershipsByContact.get(u.contact_key) || new Set();
     const out = {
       contact_key: u.contact_key,
+      first_name: u.first_name || "",
+      last_name: u.last_name || "",
+      company_name: u.company_name || "",
       email: u.email || "",
       company_title: u.company_title || "",
       city: u.city || "",
@@ -1080,6 +1083,9 @@ app.post("/api/db/member-updates", async (req, res) => {
       applied,
       hubspotPreview: {
         columns: {
+          first_name: "FirstName",
+          last_name: "LastName",
+          company_name: "CompanyName",
           email: "Email",
           company_title: "CompanyTitle",
           city: "City",

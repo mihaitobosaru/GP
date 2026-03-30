@@ -9,6 +9,9 @@ const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert"
 function defaultContactFieldMap() {
   return {
     email: "email",
+    first_name: "firstname",
+    last_name: "lastname",
+    company_name: "company",
     company_title: "jobtitle",
     city: "city",
     state_province_code: "state",
