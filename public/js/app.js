@@ -58,6 +58,8 @@ const dbUserSearch = document.getElementById("dbUserSearch");
 const dbUsersPrev = document.getElementById("dbUsersPrev");
 const dbUsersNext = document.getElementById("dbUsersNext");
 const dbUsersPage = document.getElementById("dbUsersPage");
+const memberUpdatesTableStatus = document.getElementById("memberUpdatesTableStatus");
+const memberUpdatesTableWrap = document.getElementById("memberUpdatesTableWrap");
 
 let dbUsersOffset = 0;
 const dbUsersLimit = 100;
@@ -85,6 +87,70 @@ const DB_USER_SORTABLE = new Set([
 let dbUsersSortBy = "updated_on";
 let dbUsersSortDir = "desc";
 let syncPollTimer = null;
+
+const memberUpdatesDefaultColumns = [
+  "email",
+  "company_title",
+  "city",
+  "state_province_code",
+  "postal_code",
+  "country_code",
+  "create_date",
+  "is_member",
+  "region",
+  "membership_level",
+  "membership_status",
+  "sesip_committee_member",
+  "se_committee_member",
+  "tes_committee_member",
+  "automotive_task_force",
+  "china_task_force",
+  "japan_task_force",
+  "security_task_force"
+];
+
+function renderMemberUpdatesHubspotTable(preview) {
+  if (!memberUpdatesTableWrap || !memberUpdatesTableStatus) return;
+  memberUpdatesTableWrap.innerHTML = "";
+  const rows = Array.isArray(preview?.rows) ? preview.rows : [];
+  const labels = preview?.columns || {};
+  if (!rows.length) {
+    memberUpdatesTableStatus.textContent = "No matched users to sync to HubSpot.";
+    return;
+  }
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  const cols = memberUpdatesDefaultColumns.filter((c) =>
+    rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
+  );
+  cols.forEach((c) => {
+    const th = document.createElement("th");
+    th.textContent = labels[c] || c;
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    cols.forEach((c) => {
+      const td = document.createElement("td");
+      const v = r[c];
+      if (typeof v === "boolean" || c === "is_member") {
+        td.textContent = v === true || v === 1 ? "Yes" : "No";
+      } else {
+        td.textContent = v == null ? "" : String(v);
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  memberUpdatesTableWrap.appendChild(table);
+  memberUpdatesTableStatus.textContent = `HubSpot sync preview rows: ${rows.length}`;
+  initSortableTable(table);
+}
 
 function showTab(which) {
   if (which === "explorer") {
@@ -424,6 +490,8 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
     const daysRaw = document.getElementById("memberUpdatesDays")?.value || "60";
     const days = Math.min(366, Math.max(1, parseInt(daysRaw, 10) || 60));
     memberUpdatesProgress.textContent = "Loading…";
+    if (memberUpdatesTableStatus) memberUpdatesTableStatus.textContent = "";
+    if (memberUpdatesTableWrap) memberUpdatesTableWrap.innerHTML = "";
     try {
       const res = await fetch("/api/db/member-updates", {
         method: "POST",
@@ -452,11 +520,15 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
         }
       }
       memberUpdatesProgress.textContent = msg;
+      renderMemberUpdatesHubspotTable(data.hubspotPreview);
       loadDbStats();
       loadDbCommunities();
       loadDbUsersPage();
     } catch (e) {
       memberUpdatesProgress.textContent = "Error: " + e.message;
+      if (memberUpdatesTableStatus) {
+        memberUpdatesTableStatus.textContent = "Could not load sync preview.";
+      }
     }
   };
 }

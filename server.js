@@ -16,7 +16,8 @@ import {
   listCommunitiesWithCounts,
   listMembershipsForCommunity,
   applyCommunityMemberUpdates,
-  getUsersByContactKeys
+  getUsersByContactKeys,
+  getMembershipCommunityKeysByContactKeys
 } from "./db.mjs";
 import {
   upsertContactsToHubspot,
@@ -72,6 +73,68 @@ if (!BEARER_TOKEN && !OAUTH_CLIENT_ID) {
 app.use(express.json());
 
 const db = openDatabase();
+
+const HUBSPOT_BOOL_COMMUNITIES = [
+  {
+    label: "SESIP Committee Member",
+    key: "sesip_committee_member",
+    communityKey: "fbcbb18f-7627-4d32-ba72-58c43dceb946"
+  },
+  {
+    label: "SE Committee Member",
+    key: "se_committee_member",
+    communityKey: "20cedf6d-b4dc-4f61-9b14-b585403452eb"
+  },
+  {
+    label: "TES Committee Member",
+    key: "tes_committee_member",
+    communityKey: "8dec63f8-0005-4baa-a3b0-e8c984514ff9"
+  },
+  {
+    label: "Automotive Task Force",
+    key: "automotive_task_force",
+    communityKey: "4fde118e-7b72-44c9-b913-6a638faa4f8b"
+  },
+  {
+    label: "China Task Force",
+    key: "china_task_force",
+    communityKey: "08cfe404-1538-484f-8fc7-79584dfffe21"
+  },
+  {
+    label: "Japan Task Force",
+    key: "japan_task_force",
+    communityKey: "24563c73-28d9-4410-ae26-07048392e519"
+  },
+  {
+    label: "Security Task Force",
+    key: "security_task_force",
+    communityKey: "9d6b7c9d-4f4f-4c7a-80b7-3847cfac8b01"
+  }
+];
+
+function buildHubspotSyncRows(userRows, membershipsByContact) {
+  return userRows.map((u) => {
+    const communitySet = membershipsByContact.get(u.contact_key) || new Set();
+    const out = {
+      contact_key: u.contact_key,
+      email: u.email || "",
+      company_title: u.company_title || "",
+      city: u.city || "",
+      state_province_code: u.state_province_code || "",
+      postal_code: u.postal_code || "",
+      country_code: u.country_code || "",
+      create_date: u.create_date || "",
+      is_member: u.is_member === 1 || u.is_member === true,
+      region: u.region || "",
+      membership_level: u.membership_level || "",
+      membership_status: u.membership_status || ""
+    };
+    for (const c of HUBSPOT_BOOL_COMMUNITIES) {
+      out[c.key] = communitySet.has(c.communityKey);
+    }
+    return out;
+  });
+}
 
 function makeSyncReq(cookieHeader) {
   return { headers: { cookie: cookieHeader || "" } };
@@ -957,6 +1020,15 @@ app.post("/api/db/member-updates", async (req, res) => {
       }
     );
 
+    const rawRows = touchedContactKeys.length
+      ? getUsersByContactKeys(db, touchedContactKeys)
+      : [];
+    const membershipsByContact = getMembershipCommunityKeysByContactKeys(
+      db,
+      touchedContactKeys
+    );
+    const hubspotRows = buildHubspotSyncRows(rawRows, membershipsByContact);
+
     const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
     let hubspot;
     if (!hubspotToken) {
@@ -964,17 +1036,16 @@ app.post("/api/db/member-updates", async (req, res) => {
         skipped: true,
         reason: "Set HUBSPOT_ACCESS_TOKEN to push contacts to HubSpot."
       };
-    } else if (!touchedContactKeys.length) {
+    } else if (!hubspotRows.length) {
       hubspot = {
         skipped: true,
         reason: "No SQLite users matched member-update events (by email)."
       };
     } else {
-      const rows = getUsersByContactKeys(db, touchedContactKeys);
       try {
         const hs = await upsertContactsToHubspot(
           hubspotToken,
-          rows,
+          hubspotRows,
           getHubspotContactFieldMap()
         );
         hubspot = {
@@ -990,7 +1061,7 @@ app.post("/api/db/member-updates", async (req, res) => {
         hubspot = {
           skipped: false,
           error: err.message,
-          attempted: rows.length
+          attempted: hubspotRows.length
         };
       }
     }
@@ -1007,6 +1078,29 @@ app.post("/api/db/member-updates", async (req, res) => {
         removalCount: data.RemovalCount ?? removals.length
       },
       applied,
+      hubspotPreview: {
+        columns: {
+          email: "Email",
+          company_title: "CompanyTitle",
+          city: "City",
+          state_province_code: "StateProvinceCode",
+          postal_code: "PostalCode",
+          country_code: "CountryCode",
+          create_date: "Create Date",
+          is_member: "Member",
+          region: "Region",
+          membership_level: "Membership Level",
+          membership_status: "Membership Status",
+          sesip_committee_member: "SESIP Committee Member",
+          se_committee_member: "SE Committee Member",
+          tes_committee_member: "TES Committee Member",
+          automotive_task_force: "Automotive Task Force",
+          china_task_force: "China Task Force",
+          japan_task_force: "Japan Task Force",
+          security_task_force: "Security Task Force"
+        },
+        rows: hubspotRows
+      },
       hubspot
     });
   } catch (e) {

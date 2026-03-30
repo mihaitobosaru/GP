@@ -385,6 +385,25 @@ export function getUsersByContactKeys(db, contactKeys) {
     .all(...keys);
 }
 
+export function getMembershipCommunityKeysByContactKeys(db, contactKeys) {
+  const keys = [...new Set(contactKeys)].filter(Boolean);
+  const out = new Map();
+  if (!keys.length) return out;
+  const placeholders = keys.map(() => "?").join(",");
+  const rows = db
+    .prepare(
+      `SELECT contact_key, community_key
+       FROM user_communities
+       WHERE contact_key IN (${placeholders})`
+    )
+    .all(...keys);
+  for (const row of rows) {
+    if (!out.has(row.contact_key)) out.set(row.contact_key, new Set());
+    out.get(row.contact_key).add(row.community_key);
+  }
+  return out;
+}
+
 /** Whitelist keys for ORDER BY (SQL fragments; no user-controlled identifiers). */
 const USER_SORT_EXPR = {
   contact_key: "u.contact_key",

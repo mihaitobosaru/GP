@@ -9,14 +9,23 @@ const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert"
 function defaultContactFieldMap() {
   return {
     email: "email",
-    first_name: "firstname",
-    last_name: "lastname",
-    company_name: "company",
     company_title: "jobtitle",
     city: "city",
     state_province_code: "state",
     postal_code: "zip",
-    country_code: "country"
+    country_code: "country",
+    create_date: "hl_create_date",
+    is_member: "hl_member",
+    region: "hl_region",
+    membership_level: "hl_membership_level",
+    membership_status: "hl_membership_status",
+    sesip_committee_member: "hl_sesip_committee_member",
+    se_committee_member: "hl_se_committee_member",
+    tes_committee_member: "hl_tes_committee_member",
+    automotive_task_force: "hl_automotive_task_force",
+    china_task_force: "hl_china_task_force",
+    japan_task_force: "hl_japan_task_force",
+    security_task_force: "hl_security_task_force"
   };
 }
 
@@ -50,7 +59,7 @@ function rowToHubspotInput(row, fieldMap) {
       continue;
     }
     if (v == null || v === "") continue;
-    if (dbCol === "is_member") {
+    if (dbCol === "is_member" || typeof v === "boolean") {
       properties[hsProp] = v === 1 || v === true ? "true" : "false";
       continue;
     }

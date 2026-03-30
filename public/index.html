@@ -72,12 +72,14 @@
         </label>
         <button type="button" id="dbSyncBtn">Re-sync now</button>
         <div id="dbSyncProgress" class="progressLine"></div>
-        <p class="muted" style="margin-top:16px;margin-bottom:8px;">Higher Logic <code>GetCommunityMemberUpdates</code> (v2): loads join/removal events for a window, then updates <strong>existing</strong> users whose <code>EmailAddress</code> matches <code>users.email</code> (name, company, <code>updated_on</code>). Community links are added/removed when a community key can be resolved (integration ID or name). If <code>HUBSPOT_ACCESS_TOKEN</code> is set (Private App), the same contacts are <strong>batch-upserted</strong> in HubSpot by email (create or update). Optional JSON env <code>HUBSPOT_CONTACT_MAP</code> maps SQLite columns to HubSpot property internal names.</p>
+        <p class="muted" style="margin-top:16px;margin-bottom:8px;">Higher Logic <code>GetCommunityMemberUpdates</code> (v2): loads join/removal events for a window, then updates <strong>existing</strong> users whose <code>EmailAddress</code> matches <code>users.email</code> (name, company, <code>updated_on</code>). Community links are added/removed when a community key can be resolved (integration ID or name). If <code>HUBSPOT_ACCESS_TOKEN</code> is set (Private App), the same contacts are <strong>batch-upserted</strong> in HubSpot by email (create or update). Optional JSON env <code>HUBSPOT_CONTACT_MAP</code> maps source columns to HubSpot property internal names. The table below previews exactly which rows/columns are prepared for HubSpot.</p>
         <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
           Past days <input type="number" id="memberUpdatesDays" min="1" max="366" value="60" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
         </label>
         <button type="button" id="dbMemberUpdatesBtn">Apply member updates</button>
         <div id="memberUpdatesProgress" class="progressLine"></div>
+        <div id="memberUpdatesTableStatus" class="status"></div>
+        <div id="memberUpdatesTableWrap" class="tableWrap"></div>
       </div>
 
       <div class="card db-collapsible" style="margin-top:16px;">
