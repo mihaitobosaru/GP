@@ -488,7 +488,7 @@ const memberUpdatesProgress = document.getElementById("memberUpdatesProgress");
 if (dbMemberUpdatesBtn && memberUpdatesProgress) {
   dbMemberUpdatesBtn.onclick = async () => {
     const daysRaw = document.getElementById("memberUpdatesDays")?.value || "60";
-    const days = Math.min(366, Math.max(1, parseInt(daysRaw, 10) || 60));
+    const days = Math.min(3660, Math.max(1, parseInt(daysRaw, 10) || 60));
     memberUpdatesProgress.textContent = "Loading…";
     if (memberUpdatesTableStatus) memberUpdatesTableStatus.textContent = "";
     if (memberUpdatesTableWrap) memberUpdatesTableWrap.innerHTML = "";

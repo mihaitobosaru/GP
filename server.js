@@ -989,7 +989,7 @@ app.post("/api/db/member-updates", async (req, res) => {
     return res.status(401).json({ error: "Not authenticated" });
   }
   const days = Math.min(
-    366,
+    3660,
     Math.max(1, parseInt(String(req.body?.days ?? 60), 10))
   );
   const endDate = new Date();
