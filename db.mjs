@@ -278,6 +278,8 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
   const joins = Array.isArray(communityJoins) ? communityJoins : [];
   const removals = Array.isArray(communityRemovals) ? communityRemovals : [];
   const touchedContactKeys = new Set();
+  const joinContactKeys = new Set();
+  const removalContactKeys = new Set();
   const stats = {
     usersTouchedJoins: 0,
     usersTouchedRemovals: 0,
@@ -326,6 +328,7 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
     );
     stats.usersTouchedJoins++;
     touchedContactKeys.add(ck);
+    joinContactKeys.add(ck);
     const commKey = resolveCommunityKeyForUpdate(
       db,
       j.CommunityIntegrationID,
@@ -359,6 +362,7 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
     );
     stats.usersTouchedRemovals++;
     touchedContactKeys.add(ck);
+    removalContactKeys.add(ck);
     const commKey = resolveCommunityKeyForUpdate(
       db,
       r.CommunityIntegrationID,
@@ -372,7 +376,9 @@ export function applyCommunityMemberUpdates(db, { communityJoins, communityRemov
 
   return {
     stats,
-    touchedContactKeys: [...touchedContactKeys]
+    touchedContactKeys: [...touchedContactKeys],
+    joinContactKeys: [...joinContactKeys],
+    removalContactKeys: [...removalContactKeys]
   };
 }
 

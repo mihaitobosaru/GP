@@ -103,6 +103,8 @@ const memberUpdatesDefaultColumns = [
   "region",
   "membership_level",
   "membership_status",
+  "member_update_join",
+  "member_update_removal",
   "sesip_committee_member",
   "se_committee_member",
   "tes_committee_member",
@@ -117,12 +119,25 @@ const memberUpdatesDefaultColumns = [
 function renderMemberUpdatesHubspotTable(preview) {
   if (!memberUpdatesTableWrap || !memberUpdatesTableStatus) return;
   memberUpdatesTableWrap.innerHTML = "";
-  const rows = Array.isArray(preview?.rows) ? preview.rows : [];
+  let rows = Array.isArray(preview?.rows) ? [...preview.rows] : [];
   const labels = preview?.columns || {};
   if (!rows.length) {
     memberUpdatesTableStatus.textContent = "No matched users to sync to HubSpot.";
     return;
   }
+  function syncPreviewRank(r) {
+    const j = r.member_update_join;
+    const rm = r.member_update_removal;
+    if (j && rm) return 0;
+    if (j) return 1;
+    if (rm) return 2;
+    return 3;
+  }
+  rows.sort(
+    (a, b) => syncPreviewRank(a) - syncPreviewRank(b) || String(a.email).localeCompare(String(b.email))
+  );
+  const nJoin = rows.filter((r) => r.member_update_join).length;
+  const nRemoval = rows.filter((r) => r.member_update_removal).length;
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
@@ -153,7 +168,8 @@ function renderMemberUpdatesHubspotTable(preview) {
   });
   table.appendChild(tbody);
   memberUpdatesTableWrap.appendChild(table);
-  memberUpdatesTableStatus.textContent = `HubSpot sync preview rows: ${rows.length}`;
+  memberUpdatesTableStatus.textContent =
+    `HubSpot sync preview: ${rows.length} user(s) — ${nJoin} with join event(s), ${nRemoval} with removal event(s) (columns “Join event” / “Removal event”).`;
   initSortableTable(table);
 }
 

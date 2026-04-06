@@ -126,7 +126,18 @@ const HUBSPOT_BOOL_COMMUNITIES = [
   }
 ];
 
-function buildHubspotSyncRows(userRows, membershipsByContact) {
+function buildHubspotSyncRows(
+  userRows,
+  membershipsByContact,
+  joinContactKeys = new Set(),
+  removalContactKeys = new Set()
+) {
+  const joinSet =
+    joinContactKeys instanceof Set ? joinContactKeys : new Set(joinContactKeys);
+  const removalSet =
+    removalContactKeys instanceof Set
+      ? removalContactKeys
+      : new Set(removalContactKeys);
   return userRows.map((u) => {
     const communitySet = membershipsByContact.get(u.contact_key) || new Set();
     const out = {
@@ -144,7 +155,9 @@ function buildHubspotSyncRows(userRows, membershipsByContact) {
       is_member: u.is_member === 1 || u.is_member === true,
       region: u.region || "",
       membership_level: u.membership_level || "",
-      membership_status: u.membership_status || ""
+      membership_status: u.membership_status || "",
+      member_update_join: joinSet.has(u.contact_key),
+      member_update_removal: removalSet.has(u.contact_key)
     };
     for (const c of HUBSPOT_BOOL_COMMUNITIES) {
       out[c.key] = communitySet.has(c.communityKey);
@@ -1177,13 +1190,15 @@ app.post("/api/db/member-updates", async (req, res) => {
     const removals = Array.isArray(data.CommunityRemovals)
       ? data.CommunityRemovals
       : [];
-    const { stats: applied, touchedContactKeys } = applyCommunityMemberUpdates(
-      db,
-      {
-        communityJoins: joins,
-        communityRemovals: removals
-      }
-    );
+    const {
+      stats: applied,
+      touchedContactKeys,
+      joinContactKeys,
+      removalContactKeys
+    } = applyCommunityMemberUpdates(db, {
+      communityJoins: joins,
+      communityRemovals: removals
+    });
 
     const rawRows = touchedContactKeys.length
       ? getUsersByContactKeys(db, touchedContactKeys)
@@ -1192,7 +1207,12 @@ app.post("/api/db/member-updates", async (req, res) => {
       db,
       touchedContactKeys
     );
-    const hubspotRows = buildHubspotSyncRows(rawRows, membershipsByContact);
+    const hubspotRows = buildHubspotSyncRows(
+      rawRows,
+      membershipsByContact,
+      new Set(joinContactKeys),
+      new Set(removalContactKeys)
+    );
 
     const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
     let hubspot;
@@ -1259,6 +1279,8 @@ app.post("/api/db/member-updates", async (req, res) => {
           region: "Region",
           membership_level: "Membership Level",
           membership_status: "Membership Status",
+          member_update_join: "Join event (this run)",
+          member_update_removal: "Removal event (this run)",
           sesip_committee_member: "SESIP Committee Member",
           se_committee_member: "SE Committee Member",
           tes_committee_member: "TES Committee Member",
