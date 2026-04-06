@@ -29,7 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
 
-const BASE_URL = process.env.HIGHERLOGIC_BASE_URL || "https://gpsb02.connectedcommunity.org";
+const BASE_URL = process.env.HIGHERLOGIC_BASE_URL || "https://members.globalplatform.org/";
 const BEARER_TOKEN = (process.env.HIGHERLOGIC_BEARER_TOKEN || "").trim();
 const HLIAM_KEY = (
   process.env.HIGHERLOGIC_IAM_KEY ||
@@ -42,8 +42,8 @@ const OAUTH_SCOPE = (
   process.env.HIGHERLOGIC_OAUTH_SCOPE ||
   "openid profile webapi email role offline_access"
 ).trim();
-const OAUTH_AUTHORIZE_URL = `https://gpsb02.connectedcommunity.org/higherlogic/external/oauth/connect/authorize`;
-const OAUTH_TOKEN_URL = `https://gpsb02.connectedcommunity.org/higherlogic/external/oauth/connect/token`;
+const OAUTH_AUTHORIZE_URL = `https://members.globalplatform.org/higherlogic/external/oauth/connect/authorize`;
+const OAUTH_TOKEN_URL = `https://members.globalplatform.org/higherlogic/external/oauth/connect/token`;
 const OAUTH_REDIRECT_URI = (
   process.env.HIGHERLOGIC_OAUTH_REDIRECT_URI ||
   `http://localhost:${port}/auth/callback`
