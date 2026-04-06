@@ -226,9 +226,11 @@ async function loadHubspotOAuthStatus() {
       return;
     }
     const scopeHint =
-      cfg && cfg.scope
-        ? ` Requested scopes: ${cfg.scope}.`
-        : "";
+      cfg && cfg.flow === "mcp"
+        ? " OAuth 2.1 (MCP): PKCE; authorize URL has no scope param."
+        : cfg && cfg.scope
+          ? ` Requested scopes: ${cfg.scope}.`
+          : "";
     hubspotOAuthStatus.textContent = d.connected
       ? `Connected to HubSpot OAuth (access token in cookie).${scopeHint}`
       : `Not connected — click Connect HubSpot.${scopeHint}`;

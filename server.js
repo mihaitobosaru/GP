@@ -48,6 +48,12 @@ const HUBSPOT_OAUTH_SCOPE =
     process.env.HUBSPOT_OAUTH_SCOPE || "crm.objects.contacts.read"
   ) || "crm.objects.contacts.read";
 
+/** `classic` = app.hubspot.com + scopes. `mcp` = MCP OAuth 2.1 (mcp.hubspot.com + PKCE, no scope param). */
+const HUBSPOT_OAUTH_FLOW =
+  (process.env.HUBSPOT_OAUTH_FLOW || "classic").trim().toLowerCase() === "mcp"
+    ? "mcp"
+    : "classic";
+
 const hubspotOAuthStateStore = new Map();
 const HUBSPOT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -993,12 +999,28 @@ app.get("/api/hubspot/oauth/start", (req, res) => {
     );
   }
   const state = crypto.randomBytes(16).toString("hex");
+  if (HUBSPOT_OAUTH_FLOW === "mcp") {
+    const { codeVerifier, codeChallenge } = createPkcePair();
+    hubspotOAuthStateStore.set(state, {
+      createdAt: Date.now(),
+      codeVerifier
+    });
+    const authorizeUrl = buildHubspotAuthorizeUrl({
+      clientId: HUBSPOT_OAUTH_CLIENT_ID,
+      redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
+      state,
+      flow: "mcp",
+      codeChallenge
+    });
+    return res.redirect(authorizeUrl);
+  }
   hubspotOAuthStateStore.set(state, { createdAt: Date.now() });
   const authorizeUrl = buildHubspotAuthorizeUrl({
     clientId: HUBSPOT_OAUTH_CLIENT_ID,
     redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
     scope: HUBSPOT_OAUTH_SCOPE,
-    state
+    state,
+    flow: "classic"
   });
   res.redirect(authorizeUrl);
 });
@@ -1018,6 +1040,11 @@ app.get("/hubspot/oauth/callback", async (req, res) => {
   if (Date.now() - entry.createdAt > HUBSPOT_OAUTH_STATE_TTL_MS) {
     return res.status(400).send("OAuth state expired. Try connecting again.");
   }
+  if (HUBSPOT_OAUTH_FLOW === "mcp" && !entry.codeVerifier) {
+    return res
+      .status(400)
+      .send("Missing PKCE data. Click Connect HubSpot again (use HUBSPOT_OAUTH_FLOW=mcp).");
+  }
   if (!HUBSPOT_OAUTH_CLIENT_ID || !HUBSPOT_OAUTH_CLIENT_SECRET) {
     return res.status(503).send("HubSpot OAuth not configured.");
   }
@@ -1026,7 +1053,10 @@ app.get("/hubspot/oauth/callback", async (req, res) => {
       clientId: HUBSPOT_OAUTH_CLIENT_ID,
       clientSecret: HUBSPOT_OAUTH_CLIENT_SECRET,
       redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
-      code: String(code)
+      code: String(code),
+      flow: HUBSPOT_OAUTH_FLOW,
+      codeVerifier:
+        HUBSPOT_OAUTH_FLOW === "mcp" ? entry.codeVerifier : undefined
     });
     setHubspotOAuthCookies(res, req, tokenData);
     res.redirect("/?hubspot_oauth=success");
@@ -1044,13 +1074,22 @@ app.get("/api/hubspot/oauth/status", (req, res) => {
   });
 });
 
-/** No secrets — compare with HubSpot Developer → your app → Scopes (must match). */
+/** No secrets — compare with HubSpot app settings. */
 app.get("/api/hubspot/oauth/config", (req, res) => {
   const scope = HUBSPOT_OAUTH_SCOPE;
+  const isMcp = HUBSPOT_OAUTH_FLOW === "mcp";
   res.json({
+    flow: HUBSPOT_OAUTH_FLOW,
+    pkce: isMcp,
+    authorizationEndpoint: isMcp
+      ? "https://mcp.hubspot.com/oauth/authorize/user"
+      : "https://app.hubspot.com/oauth/authorize",
+    tokenEndpoint: isMcp
+      ? "https://mcp.hubspot.com/oauth/v3/token"
+      : "https://api.hubapi.com/oauth/v1/token",
     redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
-    scope,
-    scopesRequested: scope.split(/\s+/).filter(Boolean)
+    scope: isMcp ? null : scope,
+    scopesRequested: isMcp ? [] : scope.split(/\s+/).filter(Boolean)
   });
 });
 
@@ -1088,7 +1127,8 @@ app.get("/api/hubspot/contacts", async (req, res) => {
       const td = await refreshHubspotAccessToken({
         clientId: HUBSPOT_OAUTH_CLIENT_ID,
         clientSecret: HUBSPOT_OAUTH_CLIENT_SECRET,
-        refreshToken: refresh
+        refreshToken: refresh,
+        flow: HUBSPOT_OAUTH_FLOW
       });
       setHubspotOAuthCookies(res, req, td);
       access = String(td.access_token || "").trim();

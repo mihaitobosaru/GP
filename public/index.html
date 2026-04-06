@@ -114,8 +114,8 @@
     </div>
 
     <div id="panelHubspot" class="tab-panel hidden">
-      <p class="muted" style="margin-top:0;">Standard <strong>HubSpot</strong> OAuth (developer app). Set <code>HUBSPOT_OAUTH_CLIENT_ID</code>, <code>HUBSPOT_OAUTH_CLIENT_SECRET</code>, and register redirect <code>HUBSPOT_OAUTH_REDIRECT_URI</code> in HubSpot (must match this app exactly). This is separate from <code>HUBSPOT_ACCESS_TOKEN</code> private-app sync.</p>
-      <p class="muted" style="margin-top:12px;">If authorization fails with a <strong>scope mismatch</strong>, open HubSpot Developer → your app → <strong>Scopes</strong> and enable the same scope strings as <code>HUBSPOT_OAUTH_SCOPE</code> (space- or comma-separated in env). This app’s effective request is listed in <code>/api/hubspot/oauth/config</code> and on the status line below after load.</p>
+      <p class="muted" style="margin-top:0;"><strong>HubSpot</strong> OAuth: set <code>HUBSPOT_OAUTH_CLIENT_ID</code>, <code>HUBSPOT_OAUTH_CLIENT_SECRET</code>, and register <code>HUBSPOT_OAUTH_REDIRECT_URI</code> (must match exactly). Separate from <code>HUBSPOT_ACCESS_TOKEN</code> private-app sync.</p>
+      <p class="muted" style="margin-top:12px;"><strong>MCP auth app</strong> (OAuth 2.1, install URL on <code>mcp.hubspot.com</code>): set <code>HUBSPOT_OAUTH_FLOW=mcp</code> — this app uses PKCE and the MCP authorize/token endpoints (<a href="https://mcp.hubspot.com/.well-known/oauth-authorization-server" target="_blank" rel="noopener">metadata</a>). <strong>Classic</strong> public app (<code>app.hubspot.com</code>): leave unset or <code>HUBSPOT_OAUTH_FLOW=classic</code> and align <code>HUBSPOT_OAUTH_SCOPE</code> with the app’s Scopes tab if you see a scope mismatch.</p>
       <div class="card">
         <h2>Connection</h2>
         <div id="hubspotOAuthStatus" class="status"></div>
@@ -124,7 +124,7 @@
       </div>
       <div class="card" style="margin-top:16px;">
         <h2>Test: CRM contacts</h2>
-        <p class="muted" style="margin-top:0;">Requires scope <code>crm.objects.contacts.read</code> (override with <code>HUBSPOT_OAUTH_SCOPE</code>).</p>
+        <p class="muted" style="margin-top:0;">Uses CRM Contacts API; token must allow reading contacts (classic OAuth: set <code>HUBSPOT_OAUTH_SCOPE</code>; MCP flow grants scopes at install).</p>
         <button type="button" id="hubspotLoadContactsBtn">Load 10 contacts</button>
         <div id="hubspotContactsStatus" class="status"></div>
         <div id="hubspotContactsWrap" class="tableWrap"></div>
