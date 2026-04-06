@@ -26,7 +26,8 @@ import {
 import {
   buildHubspotAuthorizeUrl,
   exchangeHubspotAuthorizationCode,
-  refreshHubspotAccessToken
+  refreshHubspotAccessToken,
+  normalizeHubspotScopes
 } from "./hubspot-oauth.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,9 +43,10 @@ const HUBSPOT_OAUTH_REDIRECT_URI = (
   process.env.HUBSPOT_OAUTH_REDIRECT_URI ||
   `http://localhost:${port}/hubspot/oauth/callback`
 ).trim();
-const HUBSPOT_OAUTH_SCOPE = (
-  process.env.HUBSPOT_OAUTH_SCOPE || "crm.objects.contacts.read"
-).trim();
+const HUBSPOT_OAUTH_SCOPE =
+  normalizeHubspotScopes(
+    process.env.HUBSPOT_OAUTH_SCOPE || "crm.objects.contacts.read"
+  ) || "crm.objects.contacts.read";
 
 const hubspotOAuthStateStore = new Map();
 const HUBSPOT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -1039,6 +1041,16 @@ app.get("/api/hubspot/oauth/status", (req, res) => {
     configured: Boolean(HUBSPOT_OAUTH_CLIENT_ID && HUBSPOT_OAUTH_CLIENT_SECRET),
     connected: Boolean(access),
     hasRefresh: Boolean(refresh)
+  });
+});
+
+/** No secrets — compare with HubSpot Developer → your app → Scopes (must match). */
+app.get("/api/hubspot/oauth/config", (req, res) => {
+  const scope = HUBSPOT_OAUTH_SCOPE;
+  res.json({
+    redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
+    scope,
+    scopesRequested: scope.split(/\s+/).filter(Boolean)
   });
 });
 

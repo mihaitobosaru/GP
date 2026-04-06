@@ -206,17 +206,32 @@ async function loadHubspotOAuthStatus() {
   if (!hubspotOAuthStatus) return;
   hubspotOAuthStatus.textContent = "Checking…";
   try {
-    const res = await fetch("/api/hubspot/oauth/status");
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error || "failed");
+    const [stRes, cfgRes] = await Promise.all([
+      fetch("/api/hubspot/oauth/status"),
+      fetch("/api/hubspot/oauth/config")
+    ]);
+    const d = await stRes.json();
+    let cfg = null;
+    if (cfgRes.ok) {
+      try {
+        cfg = await cfgRes.json();
+      } catch {
+        cfg = null;
+      }
+    }
+    if (!stRes.ok) throw new Error(d.error || "failed");
     if (!d.configured) {
       hubspotOAuthStatus.textContent =
         "OAuth not configured on server (set HUBSPOT_OAUTH_CLIENT_ID and HUBSPOT_OAUTH_CLIENT_SECRET).";
       return;
     }
+    const scopeHint =
+      cfg && cfg.scope
+        ? ` Requested scopes: ${cfg.scope}.`
+        : "";
     hubspotOAuthStatus.textContent = d.connected
-      ? "Connected to HubSpot OAuth (access token in cookie)."
-      : "Not connected — click Connect HubSpot.";
+      ? `Connected to HubSpot OAuth (access token in cookie).${scopeHint}`
+      : `Not connected — click Connect HubSpot.${scopeHint}`;
   } catch (e) {
     hubspotOAuthStatus.textContent = "Error: " + e.message;
   }

@@ -6,6 +6,16 @@
 export const HUBSPOT_OAUTH_AUTHORIZE_URL = "https://app.hubspot.com/oauth/authorize";
 export const HUBSPOT_OAUTH_TOKEN_URL = "https://api.hubapi.com/oauth/v1/token";
 
+/** Space-separated HubSpot scope strings; commas in env become spaces. */
+export function normalizeHubspotScopes(scope) {
+  if (scope == null || String(scope).trim() === "") return "";
+  return String(scope)
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function buildHubspotAuthorizeUrl({
   clientId,
   redirectUri,
@@ -15,7 +25,11 @@ export function buildHubspotAuthorizeUrl({
   const u = new URL(HUBSPOT_OAUTH_AUTHORIZE_URL);
   u.searchParams.set("client_id", clientId);
   u.searchParams.set("redirect_uri", redirectUri);
-  u.searchParams.set("scope", scope);
+  const normalized = normalizeHubspotScopes(scope);
+  if (!normalized) {
+    throw new Error("HubSpot OAuth scope is empty; set HUBSPOT_OAUTH_SCOPE.");
+  }
+  u.searchParams.set("scope", normalized);
   u.searchParams.set("state", state);
   return u.toString();
 }

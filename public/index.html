@@ -115,6 +115,7 @@
 
     <div id="panelHubspot" class="tab-panel hidden">
       <p class="muted" style="margin-top:0;">Standard <strong>HubSpot</strong> OAuth (developer app). Set <code>HUBSPOT_OAUTH_CLIENT_ID</code>, <code>HUBSPOT_OAUTH_CLIENT_SECRET</code>, and register redirect <code>HUBSPOT_OAUTH_REDIRECT_URI</code> in HubSpot (must match this app exactly). This is separate from <code>HUBSPOT_ACCESS_TOKEN</code> private-app sync.</p>
+      <p class="muted" style="margin-top:12px;">If authorization fails with a <strong>scope mismatch</strong>, open HubSpot Developer → your app → <strong>Scopes</strong> and enable the same scope strings as <code>HUBSPOT_OAUTH_SCOPE</code> (space- or comma-separated in env). This app’s effective request is listed in <code>/api/hubspot/oauth/config</code> and on the status line below after load.</p>
       <div class="card">
         <h2>Connection</h2>
         <div id="hubspotOAuthStatus" class="status"></div>
