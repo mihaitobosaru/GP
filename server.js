@@ -29,7 +29,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
 
-const BASE_URL = process.env.HIGHERLOGIC_BASE_URL || "https://members.globalplatform.org/";
+/** Must match the host you use for OAuth (e.g. iss …/members.globalplatform.org). No trailing slash. */
+const BASE_URL = (
+  process.env.HIGHERLOGIC_BASE_URL || "https://members.globalplatform.org"
+).replace(/\/+$/, "");
 const BEARER_TOKEN = (process.env.HIGHERLOGIC_BEARER_TOKEN || "").trim();
 const HLIAM_KEY = (
   process.env.HIGHERLOGIC_IAM_KEY ||
@@ -395,14 +398,120 @@ function extractToken(data) {
   if (!data || typeof data !== "object") return "";
   return (
     data.access_token ||
+    data.accessToken ||
     data.AccessToken ||
     data.Token ||
     data.token ||
     data.Data?.access_token ||
+    data.Data?.accessToken ||
     data.Data?.AccessToken ||
     data.Data?.Token ||
     ""
   );
+}
+
+/** OAuth token endpoint body shapes differ by tenant. */
+function extractOAuthAccessToken(data) {
+  return String(extractToken(data) || "").trim();
+}
+
+/** Deeper extraction for Authentication/Login JSON (shape varies by tenant / HL version). */
+function extractLoginApiToken(data, depth = 0) {
+  if (!data || depth > 4) return "";
+  if (Array.isArray(data) && data.length && typeof data[0] === "object") {
+    return extractLoginApiToken(data[0], depth + 1);
+  }
+  if (typeof data !== "object") return "";
+  const base = String(extractToken(data) || "").trim();
+  if (base) return base;
+  const keyCandidates = [
+    "ApiToken",
+    "APIToken",
+    "api_token",
+    "BearerToken",
+    "WebApiToken",
+    "AuthenticationToken",
+    "AuthToken",
+    "UserToken",
+    "SessionToken",
+    "SecurityToken",
+    "OAuthToken"
+  ];
+  for (const k of keyCandidates) {
+    const v = data[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  const nestedKeys = [
+    "Data",
+    "data",
+    "Result",
+    "result",
+    "Value",
+    "value",
+    "Payload",
+    "payload",
+    "Response",
+    "response"
+  ];
+  for (const nk of nestedKeys) {
+    const child = data[nk];
+    if (child && typeof child === "object") {
+      const t = extractLoginApiToken(child, depth + 1);
+      if (t) return t;
+    }
+  }
+  return "";
+}
+
+/** Some tenants return the bearer only in Set-Cookie, not in the JSON body. */
+function extractTokenFromSetCookieHeaders(setCookieValues) {
+  if (!Array.isArray(setCookieValues) || !setCookieValues.length) return "";
+  const preferredNames =
+    /^access_token$|^AccessToken$|^Token$|^ApiToken$|^BearerToken$|^AuthenticationToken$/i;
+  for (const line of setCookieValues) {
+    const pair = String(line).split(";")[0].trim();
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq).trim();
+    let value = pair.slice(eq + 1).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      /* keep raw */
+    }
+    if (!value || value.length < 8) continue;
+    if (preferredNames.test(name)) return value;
+  }
+  for (const line of setCookieValues) {
+    const pair = String(line).split(";")[0].trim();
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq).trim();
+    let value = pair.slice(eq + 1).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      /* keep raw */
+    }
+    if (
+      value &&
+      value.length >= 16 &&
+      /token|auth|session|bearer|access/i.test(name)
+    ) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function extractTokenFromUpstreamCookieJar() {
+  for (const [name, value] of upstreamCookieJar.entries()) {
+    if (!value || String(value).length < 16) continue;
+    if (/token|auth|session|bearer|access|oauth/i.test(name)) {
+      return String(value).trim();
+    }
+  }
+  return "";
 }
 
 function getAuthDebug(req) {
@@ -657,9 +766,15 @@ app.get("/auth/callback", async (req, res) => {
         .send(`Token exchange failed (${tokenResponse.status}): ${JSON.stringify(data)}`);
     }
 
-    oauthAccessToken = String(data.access_token || "").trim();
+    oauthAccessToken = extractOAuthAccessToken(data);
     if (!oauthAccessToken) {
-      return res.status(500).send("Token response did not include access_token.");
+      const keys =
+        data && typeof data === "object" && !data.raw
+          ? Object.keys(data).join(", ")
+          : "parse failed or non-object";
+      return res.status(500).send(
+        `Token response did not include a usable access token. Keys: ${keys}`
+      );
     }
 
     if (!API_USERNAME || !API_PASSWORD) {
@@ -678,7 +793,8 @@ app.get("/auth/callback", async (req, res) => {
       method: "POST",
       headers: {
         HLIAMKey: HLIAM_KEY,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Accept: "application/json"
       },
       body: JSON.stringify({
         Username: API_USERNAME,
@@ -687,6 +803,8 @@ app.get("/auth/callback", async (req, res) => {
     });
 
     const loginText = await loginResponse.text();
+    const loginCtHeader =
+      loginResponse.headers.get("content-type") || "";
     let loginData;
     try {
       loginData = loginText ? JSON.parse(loginText) : {};
@@ -694,8 +812,18 @@ app.get("/auth/callback", async (req, res) => {
       loginData = { raw: loginText };
     }
 
+    const loginParseFailed =
+      Boolean(loginData && Object.prototype.hasOwnProperty.call(loginData, "raw")) ||
+      (loginCtHeader && !/json/i.test(loginCtHeader));
+
     console.log("[auth/callback] Authentication/Login status:", loginResponse.status);
-    console.log("[auth/callback] Authentication/Login response:", loginData);
+    console.log("[auth/callback] Authentication/Login Content-Type:", loginCtHeader);
+    console.log(
+      "[auth/callback] Authentication/Login response (truncated):",
+      loginParseFailed
+        ? `(non-JSON body, length ${String(loginText).length})`
+        : loginData
+    );
 
     if (!loginResponse.ok) {
       return res.status(500).send(
@@ -714,11 +842,34 @@ app.get("/auth/callback", async (req, res) => {
       getCookieNamesFromHeader(upstreamCookieHeader)
     );
 
-    apiAccessToken = String(extractToken(loginData)).trim();
+    let apiToken = "";
+    if (!loginParseFailed) {
+      apiToken =
+        extractLoginApiToken(loginData) ||
+        extractTokenFromSetCookieHeaders(loginSetCookies) ||
+        extractTokenFromUpstreamCookieJar();
+    } else {
+      console.warn(
+        "[auth/callback] Login body was not JSON (wrong BASE_URL, HTML error page, or API shape). Trying cookies, then OAuth access_token."
+      );
+      apiToken =
+        extractTokenFromSetCookieHeaders(loginSetCookies) ||
+        extractTokenFromUpstreamCookieJar();
+    }
+    if (!apiToken && oauthAccessToken) {
+      console.log(
+        "[auth/callback] Using OAuth access_token as API bearer (Login did not yield a token in JSON/cookies)."
+      );
+      apiToken = oauthAccessToken;
+    }
+    apiAccessToken = String(apiToken || "").trim();
     console.log("[auth/callback] Extracted API token length:", apiAccessToken.length);
     if (!apiAccessToken) {
       return res.status(500).send(
-        `Authentication/Login succeeded but no API token found in response: ${JSON.stringify(loginData)}`
+        `Authentication/Login succeeded but no API token could be resolved. ` +
+          `Login JSON (keys): ${loginData && typeof loginData === "object" ? Object.keys(loginData).join(", ") : "n/a"}. ` +
+          `Set-Cookie count: ${loginSetCookies.length}. ` +
+          `Full body: ${JSON.stringify(loginData)}`
       );
     }
 
