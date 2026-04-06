@@ -46,8 +46,16 @@ const memberTableColumns = [
 
 const tabBtnExplorer = document.getElementById("tabBtnExplorer");
 const tabBtnDatabase = document.getElementById("tabBtnDatabase");
+const tabBtnHubspot = document.getElementById("tabBtnHubspot");
 const panelExplorer = document.getElementById("panelExplorer");
 const panelDatabase = document.getElementById("panelDatabase");
+const panelHubspot = document.getElementById("panelHubspot");
+const hubspotOAuthStatus = document.getElementById("hubspotOAuthStatus");
+const hubspotConnectBtn = document.getElementById("hubspotConnectBtn");
+const hubspotDisconnectBtn = document.getElementById("hubspotDisconnectBtn");
+const hubspotLoadContactsBtn = document.getElementById("hubspotLoadContactsBtn");
+const hubspotContactsStatus = document.getElementById("hubspotContactsStatus");
+const hubspotContactsWrap = document.getElementById("hubspotContactsWrap");
 const dbSyncBtn = document.getElementById("dbSyncBtn");
 const dbSyncProgress = document.getElementById("dbSyncProgress");
 const dbCommunitiesWrap = document.getElementById("dbCommunitiesWrap");
@@ -174,25 +182,134 @@ function renderMemberUpdatesHubspotTable(preview) {
 }
 
 function showTab(which) {
-  if (which === "explorer") {
-    panelExplorer.classList.remove("hidden");
-    panelDatabase.classList.add("hidden");
-    tabBtnExplorer.classList.add("active");
-    tabBtnDatabase.classList.remove("active");
-  } else {
-    panelExplorer.classList.add("hidden");
-    panelDatabase.classList.remove("hidden");
-    tabBtnExplorer.classList.remove("active");
-    tabBtnDatabase.classList.add("active");
+  const isExplorer = which === "explorer";
+  const isDatabase = which === "database";
+  const isHubspot = which === "hubspot";
+  panelExplorer.classList.toggle("hidden", !isExplorer);
+  panelDatabase.classList.toggle("hidden", !isDatabase);
+  if (panelHubspot) panelHubspot.classList.toggle("hidden", !isHubspot);
+  tabBtnExplorer.classList.toggle("active", isExplorer);
+  tabBtnDatabase.classList.toggle("active", isDatabase);
+  if (tabBtnHubspot) tabBtnHubspot.classList.toggle("active", isHubspot);
+  if (isDatabase) {
     loadDbStats();
     loadDbCommunities();
     dbUsersOffset = 0;
     loadDbUsersPage();
   }
+  if (isHubspot) {
+    loadHubspotOAuthStatus();
+  }
+}
+
+async function loadHubspotOAuthStatus() {
+  if (!hubspotOAuthStatus) return;
+  hubspotOAuthStatus.textContent = "Checking…";
+  try {
+    const res = await fetch("/api/hubspot/oauth/status");
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "failed");
+    if (!d.configured) {
+      hubspotOAuthStatus.textContent =
+        "OAuth not configured on server (set HUBSPOT_OAUTH_CLIENT_ID and HUBSPOT_OAUTH_CLIENT_SECRET).";
+      return;
+    }
+    hubspotOAuthStatus.textContent = d.connected
+      ? "Connected to HubSpot OAuth (access token in cookie)."
+      : "Not connected — click Connect HubSpot.";
+  } catch (e) {
+    hubspotOAuthStatus.textContent = "Error: " + e.message;
+  }
+}
+
+function renderHubspotContacts(data) {
+  if (!hubspotContactsWrap) return;
+  hubspotContactsWrap.innerHTML = "";
+  const results = Array.isArray(data?.results) ? data.results : [];
+  if (!results.length) {
+    hubspotContactsWrap.textContent = "No contacts returned.";
+    return;
+  }
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  ["ID", "Email", "First name", "Last name", "Company"].forEach((h) => {
+    const th = document.createElement("th");
+    th.textContent = h;
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  results.forEach((row) => {
+    const p = row.properties || {};
+    const tr = document.createElement("tr");
+    [
+      row.id || "",
+      p.email || "",
+      p.firstname || "",
+      p.lastname || "",
+      p.company || ""
+    ].forEach((cell) => {
+      const td = document.createElement("td");
+      td.textContent = cell == null ? "" : String(cell);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  hubspotContactsWrap.appendChild(table);
+  initSortableTable(table);
 }
 
 tabBtnExplorer.onclick = () => showTab("explorer");
 tabBtnDatabase.onclick = () => showTab("database");
+if (tabBtnHubspot) tabBtnHubspot.onclick = () => showTab("hubspot");
+
+if (hubspotConnectBtn) {
+  hubspotConnectBtn.onclick = () => {
+    window.location.href = "/api/hubspot/oauth/start";
+  };
+}
+if (hubspotDisconnectBtn) {
+  hubspotDisconnectBtn.onclick = async () => {
+    try {
+      const res = await fetch("/api/hubspot/oauth/disconnect", { method: "POST" });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "failed");
+      hubspotContactsWrap.innerHTML = "";
+      if (hubspotContactsStatus) hubspotContactsStatus.textContent = "";
+      await loadHubspotOAuthStatus();
+    } catch (e) {
+      if (hubspotOAuthStatus) hubspotOAuthStatus.textContent = "Error: " + e.message;
+    }
+  };
+}
+if (hubspotLoadContactsBtn) {
+  hubspotLoadContactsBtn.onclick = async () => {
+    if (!hubspotContactsStatus || !hubspotContactsWrap) return;
+    hubspotContactsStatus.textContent = "Loading…";
+    hubspotContactsWrap.innerHTML = "";
+    try {
+      const res = await fetch("/api/hubspot/contacts?limit=10");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.details?.message || "failed");
+      hubspotContactsStatus.textContent =
+        "OK — " + (Array.isArray(data.results) ? data.results.length : 0) + " contact(s).";
+      renderHubspotContacts(data);
+    } catch (e) {
+      hubspotContactsStatus.textContent = "Error: " + e.message;
+    }
+  };
+}
+
+const hubspotOAuthParam = new URLSearchParams(window.location.search).get("hubspot_oauth");
+if (hubspotOAuthParam === "success") {
+  showTab("hubspot");
+  const u = new URL(window.location.href);
+  u.searchParams.delete("hubspot_oauth");
+  window.history.replaceState({}, "", u.pathname + u.search);
+}
 
 async function loadDbStats() {
   const fileEl = document.getElementById("dbFileInfo");

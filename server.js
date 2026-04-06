@@ -23,11 +23,31 @@ import {
   upsertContactsToHubspot,
   getHubspotContactFieldMap
 } from "./hubspot.mjs";
+import {
+  buildHubspotAuthorizeUrl,
+  exchangeHubspotAuthorizationCode,
+  refreshHubspotAccessToken
+} from "./hubspot-oauth.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+app.set("trust proxy", 1);
 const port = process.env.PORT || 3000;
+
+/** HubSpot developer OAuth app (standard HubSpot OAuth, not Higher Logic). */
+const HUBSPOT_OAUTH_CLIENT_ID = (process.env.HUBSPOT_OAUTH_CLIENT_ID || "").trim();
+const HUBSPOT_OAUTH_CLIENT_SECRET = (process.env.HUBSPOT_OAUTH_CLIENT_SECRET || "").trim();
+const HUBSPOT_OAUTH_REDIRECT_URI = (
+  process.env.HUBSPOT_OAUTH_REDIRECT_URI ||
+  `http://localhost:${port}/hubspot/oauth/callback`
+).trim();
+const HUBSPOT_OAUTH_SCOPE = (
+  process.env.HUBSPOT_OAUTH_SCOPE || "crm.objects.contacts.read"
+).trim();
+
+const hubspotOAuthStateStore = new Map();
+const HUBSPOT_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 /** Must match the host you use for OAuth (e.g. iss …/members.globalplatform.org). No trailing slash. */
 const BASE_URL = (
@@ -403,6 +423,46 @@ function parseCookies(cookieHeader = "") {
     cookies[rawKey] = decodeURIComponent(rawValue.join("=") || "");
   }
   return cookies;
+}
+
+function cookieSecure(req) {
+  return (
+    process.env.NODE_ENV === "production" ||
+    req.get("x-forwarded-proto") === "https"
+  );
+}
+
+function getHubspotOAuthCookies(req) {
+  const c = parseCookies(req.headers.cookie || "");
+  return { access: c.hs_oauth_at || "", refresh: c.hs_oauth_rt || "" };
+}
+
+function setHubspotOAuthCookies(res, req, tokenData) {
+  const access = String(tokenData.access_token || "").trim();
+  const refresh = String(tokenData.refresh_token || "").trim();
+  const expiresIn = Math.min(
+    Math.max(60, parseInt(String(tokenData.expires_in || 1800), 10)),
+    60 * 60 * 24
+  );
+  const secure = cookieSecure(req);
+  const cookies = [
+    `hs_oauth_at=${encodeURIComponent(access)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${expiresIn}${secure ? "; Secure" : ""}`
+  ];
+  if (refresh) {
+    cookies.push(
+      `hs_oauth_rt=${encodeURIComponent(refresh)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}${secure ? "; Secure" : ""}`
+    );
+  }
+  for (const line of cookies) {
+    res.append("Set-Cookie", line);
+  }
+}
+
+function clearHubspotOAuthCookies(res, req) {
+  const secure = cookieSecure(req);
+  const tail = `Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+  res.append("Set-Cookie", `hs_oauth_at=; ${tail}`);
+  res.append("Set-Cookie", `hs_oauth_rt=; ${tail}`);
 }
 
 function getTokenSource(req) {
@@ -922,6 +982,124 @@ app.get("/api/auth/status", (req, res) => {
 
 app.get("/api/debug/auth", (req, res) => {
   res.json(getAuthDebug(req));
+});
+
+app.get("/api/hubspot/oauth/start", (req, res) => {
+  if (!HUBSPOT_OAUTH_CLIENT_ID || !HUBSPOT_OAUTH_CLIENT_SECRET) {
+    return res.status(503).send(
+      "HubSpot OAuth is not configured. Set HUBSPOT_OAUTH_CLIENT_ID and HUBSPOT_OAUTH_CLIENT_SECRET (and register HUBSPOT_OAUTH_REDIRECT_URI in HubSpot)."
+    );
+  }
+  const state = crypto.randomBytes(16).toString("hex");
+  hubspotOAuthStateStore.set(state, { createdAt: Date.now() });
+  const authorizeUrl = buildHubspotAuthorizeUrl({
+    clientId: HUBSPOT_OAUTH_CLIENT_ID,
+    redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
+    scope: HUBSPOT_OAUTH_SCOPE,
+    state
+  });
+  res.redirect(authorizeUrl);
+});
+
+app.get("/hubspot/oauth/callback", async (req, res) => {
+  const { code, state, error, error_description: errDesc } = req.query;
+  if (error) {
+    return res
+      .status(400)
+      .send(`HubSpot OAuth error: ${error}${errDesc ? ` — ${errDesc}` : ""}`);
+  }
+  if (!code || !state || !hubspotOAuthStateStore.has(String(state))) {
+    return res.status(400).send("Invalid OAuth state or missing code.");
+  }
+  const entry = hubspotOAuthStateStore.get(String(state));
+  hubspotOAuthStateStore.delete(String(state));
+  if (Date.now() - entry.createdAt > HUBSPOT_OAUTH_STATE_TTL_MS) {
+    return res.status(400).send("OAuth state expired. Try connecting again.");
+  }
+  if (!HUBSPOT_OAUTH_CLIENT_ID || !HUBSPOT_OAUTH_CLIENT_SECRET) {
+    return res.status(503).send("HubSpot OAuth not configured.");
+  }
+  try {
+    const tokenData = await exchangeHubspotAuthorizationCode({
+      clientId: HUBSPOT_OAUTH_CLIENT_ID,
+      clientSecret: HUBSPOT_OAUTH_CLIENT_SECRET,
+      redirectUri: HUBSPOT_OAUTH_REDIRECT_URI,
+      code: String(code)
+    });
+    setHubspotOAuthCookies(res, req, tokenData);
+    res.redirect("/?hubspot_oauth=success");
+  } catch (e) {
+    res.status(500).send(String(e.message || e));
+  }
+});
+
+app.get("/api/hubspot/oauth/status", (req, res) => {
+  const { access, refresh } = getHubspotOAuthCookies(req);
+  res.json({
+    configured: Boolean(HUBSPOT_OAUTH_CLIENT_ID && HUBSPOT_OAUTH_CLIENT_SECRET),
+    connected: Boolean(access),
+    hasRefresh: Boolean(refresh)
+  });
+});
+
+app.post("/api/hubspot/oauth/disconnect", (req, res) => {
+  clearHubspotOAuthCookies(res, req);
+  res.json({ ok: true });
+});
+
+app.get("/api/hubspot/contacts", async (req, res) => {
+  let { access, refresh } = getHubspotOAuthCookies(req);
+  if (!access) {
+    return res.status(401).json({
+      error:
+        "HubSpot OAuth not connected. Open the HubSpot tab and click Connect HubSpot."
+    });
+  }
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
+  const props = "email,firstname,lastname,company,hs_object_id";
+  const listUrl = new URL("https://api.hubapi.com/crm/v3/objects/contacts");
+  listUrl.searchParams.set("limit", String(limit));
+  listUrl.searchParams.set("properties", props);
+  async function fetchList(token) {
+    return fetch(listUrl.toString(), {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+  }
+  let r = await fetchList(access);
+  if (
+    r.status === 401 &&
+    refresh &&
+    HUBSPOT_OAUTH_CLIENT_ID &&
+    HUBSPOT_OAUTH_CLIENT_SECRET
+  ) {
+    try {
+      const td = await refreshHubspotAccessToken({
+        clientId: HUBSPOT_OAUTH_CLIENT_ID,
+        clientSecret: HUBSPOT_OAUTH_CLIENT_SECRET,
+        refreshToken: refresh
+      });
+      setHubspotOAuthCookies(res, req, td);
+      access = String(td.access_token || "").trim();
+      r = await fetchList(access);
+    } catch (e) {
+      return res.status(401).json({ error: String(e.message || e) });
+    }
+  }
+  const text = await r.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  if (!r.ok) {
+    return res.status(r.status).json({
+      error: "HubSpot CRM API error",
+      status: r.status,
+      details: data
+    });
+  }
+  res.json(data);
 });
 
 /**

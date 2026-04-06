@@ -13,6 +13,7 @@
     <div class="tabs">
       <button type="button" class="tab active" id="tabBtnExplorer">Explorer</button>
       <button type="button" class="tab" id="tabBtnDatabase">Database</button>
+      <button type="button" class="tab" id="tabBtnHubspot">HubSpot</button>
     </div>
 
     <div class="status">
@@ -109,6 +110,23 @@
             </div>
           </div>
         </details>
+      </div>
+    </div>
+
+    <div id="panelHubspot" class="tab-panel hidden">
+      <p class="muted" style="margin-top:0;">Standard <strong>HubSpot</strong> OAuth (developer app). Set <code>HUBSPOT_OAUTH_CLIENT_ID</code>, <code>HUBSPOT_OAUTH_CLIENT_SECRET</code>, and register redirect <code>HUBSPOT_OAUTH_REDIRECT_URI</code> in HubSpot (must match this app exactly). This is separate from <code>HUBSPOT_ACCESS_TOKEN</code> private-app sync.</p>
+      <div class="card">
+        <h2>Connection</h2>
+        <div id="hubspotOAuthStatus" class="status"></div>
+        <button type="button" id="hubspotConnectBtn">Connect HubSpot</button>
+        <button type="button" id="hubspotDisconnectBtn">Disconnect</button>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <h2>Test: CRM contacts</h2>
+        <p class="muted" style="margin-top:0;">Requires scope <code>crm.objects.contacts.read</code> (override with <code>HUBSPOT_OAUTH_SCOPE</code>).</p>
+        <button type="button" id="hubspotLoadContactsBtn">Load 10 contacts</button>
+        <div id="hubspotContactsStatus" class="status"></div>
+        <div id="hubspotContactsWrap" class="tableWrap"></div>
       </div>
     </div>
   </div>
