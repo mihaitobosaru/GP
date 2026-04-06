@@ -28,7 +28,9 @@ function defaultContactFieldMap() {
     automotive_task_force: "hl_automotive_task_force",
     china_task_force: "hl_china_task_force",
     japan_task_force: "hl_japan_task_force",
-    security_task_force: "hl_security_task_force"
+    security_task_force: "hl_security_task_force",
+    digital_wallets_task_force: "hl_digital_wallets_task_force",
+    trusted_open_source_silicon_tf: "hl_trusted_open_source_silicon_tf"
   };
 }
 

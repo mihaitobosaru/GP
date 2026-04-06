@@ -109,7 +109,9 @@ const memberUpdatesDefaultColumns = [
   "automotive_task_force",
   "china_task_force",
   "japan_task_force",
-  "security_task_force"
+  "security_task_force",
+  "digital_wallets_task_force",
+  "trusted_open_source_silicon_tf"
 ];
 
 function renderMemberUpdatesHubspotTable(preview) {

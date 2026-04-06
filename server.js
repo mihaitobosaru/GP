@@ -77,41 +77,52 @@ app.use(express.json());
 
 const db = openDatabase();
 
+/** Target list column → GlobalPlatform community_key (GUID). Sync after HL community IDs change. */
 const HUBSPOT_BOOL_COMMUNITIES = [
   {
     label: "SESIP Committee Member",
     key: "sesip_committee_member",
-    communityKey: "fbcbb18f-7627-4d32-ba72-58c43dceb946"
+    communityKey: "4a9b36f0-efd4-4408-b80b-018b391d061a"
   },
   {
     label: "SE Committee Member",
     key: "se_committee_member",
-    communityKey: "20cedf6d-b4dc-4f61-9b14-b585403452eb"
+    communityKey: "7ded058e-e51e-473a-8622-30c951d9cea0"
   },
   {
     label: "TES Committee Member",
     key: "tes_committee_member",
-    communityKey: "8dec63f8-0005-4baa-a3b0-e8c984514ff9"
+    communityKey: "e7f376e3-b2e8-45ce-b23f-018c17c4468c"
   },
   {
     label: "Automotive Task Force",
     key: "automotive_task_force",
-    communityKey: "4fde118e-7b72-44c9-b913-6a638faa4f8b"
+    communityKey: "6ef8848b-91bb-415e-8c19-8692725b704a"
   },
   {
     label: "China Task Force",
     key: "china_task_force",
-    communityKey: "08cfe404-1538-484f-8fc7-79584dfffe21"
+    communityKey: "6ebf3127-8433-4ca5-8042-72d6f64dab07"
   },
   {
     label: "Japan Task Force",
     key: "japan_task_force",
-    communityKey: "24563c73-28d9-4410-ae26-07048392e519"
+    communityKey: "432c3f77-9914-4eeb-8777-c9edab890ef4"
   },
   {
     label: "Security Task Force",
     key: "security_task_force",
-    communityKey: "9d6b7c9d-4f4f-4c7a-80b7-3847cfac8b01"
+    communityKey: "8c715805-167b-4158-9749-e9c102f693b0"
+  },
+  {
+    label: "Digital Wallets Task Force",
+    key: "digital_wallets_task_force",
+    communityKey: "838e08a9-b3d0-4662-ac68-bdcb5d0df771"
+  },
+  {
+    label: "Trusted Open Source Silicon TF",
+    key: "trusted_open_source_silicon_tf",
+    communityKey: "b41f3bb3-50fd-4644-8158-019933ca5fa2"
   }
 ];
 
@@ -1254,7 +1265,9 @@ app.post("/api/db/member-updates", async (req, res) => {
           automotive_task_force: "Automotive Task Force",
           china_task_force: "China Task Force",
           japan_task_force: "Japan Task Force",
-          security_task_force: "Security Task Force"
+          security_task_force: "Security Task Force",
+          digital_wallets_task_force: "Digital Wallets Task Force",
+          trusted_open_source_silicon_tf: "Trusted Open Source Silicon TF"
         },
         rows: hubspotRows
       },
