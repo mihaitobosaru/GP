@@ -22,7 +22,8 @@ import {
 import {
   checkContactsExistInHubspot,
   getHubspotContactFieldMap,
-  listHubspotContactProperties
+  listHubspotContactProperties,
+  upsertHubspotContactInputs
 } from "./hubspot.mjs";
 import {
   buildHubspotAuthorizeUrl,
@@ -193,6 +194,62 @@ function buildHubspotSyncRows(
     }
     return out;
   });
+}
+
+function normalizeHubspotBoolString(v) {
+  const s = String(v == null ? "" : v)
+    .trim()
+    .toLowerCase();
+  return ["true", "yes", "1", "y"].includes(s) ? "true" : "false";
+}
+
+function getRequestedHubspotCustomFields() {
+  return [
+    { key: "sesip_committee_member", label: "SESIP Committee Member" },
+    { key: "se_committee_member", label: "SE Committee Member" },
+    { key: "tes_committee_member", label: "TES Committee Member" },
+    { key: "automotive_task_force", label: "Automotive Task Force" },
+    { key: "china_task_force", label: "China Task Force" },
+    {
+      key: "digital_wallets_task_force",
+      label: "Digital Wallets Task Force"
+    },
+    { key: "japan_task_force", label: "Japan Task Force" },
+    { key: "security_task_force", label: "Security Task Force" },
+    {
+      key: "trusted_open_source_silicon_tf",
+      label: "Trusted Open Source Silicon Task Force"
+    }
+  ];
+}
+
+async function resolveHubspotCustomFields(accessToken) {
+  const requestedCustomFields = getRequestedHubspotCustomFields();
+  const configuredMap = getHubspotContactFieldMap();
+  const propertyDefs = await listHubspotContactProperties(accessToken);
+  const byInternal = new Map(propertyDefs.map((p) => [p.name.toLowerCase(), p]));
+  const byLabel = new Map(
+    propertyDefs.map((p) => [String(p.label || "").trim().toLowerCase(), p])
+  );
+  const resolvedByKey = {};
+  const resolution = [];
+  for (const f of requestedCustomFields) {
+    const configuredInternal = String(configuredMap[f.key] || "").trim();
+    const configuredDef = configuredInternal
+      ? byInternal.get(configuredInternal.toLowerCase())
+      : null;
+    const labelDef = byLabel.get(f.label.toLowerCase()) || null;
+    const chosen = configuredDef || labelDef || null;
+    resolvedByKey[f.key] = chosen?.name || "";
+    resolution.push({
+      key: f.key,
+      label: f.label,
+      configuredInternalName: configuredInternal || null,
+      resolvedInternalName: chosen?.name || null,
+      resolvedBy: configuredDef ? "configured-map" : labelDef ? "label-match" : "unresolved"
+    });
+  }
+  return { resolvedByKey, resolution };
 }
 
 function makeSyncReq(cookieHeader) {
@@ -1470,47 +1527,11 @@ app.post("/api/db/member-updates", async (req, res) => {
       };
     } else {
       try {
-        const requestedCustomFields = [
-          { key: "create_date", label: "Create Date" },
-          { key: "sesip_committee_member", label: "SESIP Committee Member" },
-          { key: "se_committee_member", label: "SE Committee Member" },
-          { key: "tes_committee_member", label: "TES Committee Member" },
-          { key: "automotive_task_force", label: "Automotive Task Force" },
-          { key: "china_task_force", label: "China Task Force" },
-          {
-            key: "digital_wallets_task_force",
-            label: "Digital Wallets Task Force"
-          },
-          { key: "japan_task_force", label: "Japan Task Force" },
-          { key: "security_task_force", label: "Security Task Force" },
-          {
-            key: "trusted_open_source_silicon_tf",
-            label: "Trusted Open Source Silicon Task Force"
-          }
-        ];
-        const configuredMap = getHubspotContactFieldMap();
-        const propertyDefs = await listHubspotContactProperties(hubspotToken);
-        const byInternal = new Map(propertyDefs.map((p) => [p.name.toLowerCase(), p]));
-        const byLabel = new Map(
-          propertyDefs.map((p) => [String(p.label || "").trim().toLowerCase(), p])
-        );
-        const resolvedByKey = {};
-        for (const f of requestedCustomFields) {
-          const configuredInternal = String(configuredMap[f.key] || "").trim();
-          const configuredDef = configuredInternal
-            ? byInternal.get(configuredInternal.toLowerCase())
-            : null;
-          const labelDef = byLabel.get(f.label.toLowerCase()) || null;
-          const chosen = configuredDef || labelDef || null;
-          resolvedByKey[f.key] = chosen?.name || "";
-          hubspotCustomFieldResolution.push({
-            key: f.key,
-            label: f.label,
-            configuredInternalName: configuredInternal || null,
-            resolvedInternalName: chosen?.name || null,
-            resolvedBy: configuredDef ? "configured-map" : labelDef ? "label-match" : "unresolved"
-          });
-        }
+        const {
+          resolvedByKey,
+          resolution: customResolution
+        } = await resolveHubspotCustomFields(hubspotToken);
+        hubspotCustomFieldResolution = customResolution;
         const hsProperties = [
           "firstname",
           "lastname",
@@ -1572,7 +1593,7 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: p.state || "",
             postal_code: p.zip || "",
             country_gp_data: p.country || "",
-            create_date: resolvedByKey.create_date ? p[resolvedByKey.create_date] || "" : "",
+            create_date: "",
             sesip_committee_member: resolvedByKey.sesip_committee_member
               ? p[resolvedByKey.sesip_committee_member] || ""
               : "",
@@ -1612,7 +1633,6 @@ app.post("/api/db/member-updates", async (req, res) => {
             ["state_region", "state_province_code", "text"],
             ["postal_code", "postal_code", "text"],
             ["country_gp_data", "country_code", "text"],
-            ["create_date", "create_date", "date"],
             ["sesip_committee_member", "sesip_committee_member", "boolish"],
             ["se_committee_member", "se_committee_member", "boolish"],
             ["tes_committee_member", "tes_committee_member", "boolish"],
@@ -1665,7 +1685,6 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: "State/Region",
             postal_code: "Postal Code",
             country_gp_data: "Country (GP Data)",
-            create_date: `Create Date (${resolvedNameFor("create_date")})`,
             sesip_committee_member: `SESIP Committee Member (${resolvedNameFor("sesip_committee_member")})`,
             se_committee_member: `SE Committee Member (${resolvedNameFor("se_committee_member")})`,
             tes_committee_member: `TES Committee Member (${resolvedNameFor("tes_committee_member")})`,
@@ -1747,6 +1766,130 @@ app.post("/api/db/member-updates", async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/db/member-updates/sync-hubspot", async (req, res) => {
+  const hubspotToken = String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+  if (!hubspotToken) {
+    return res.status(503).json({ error: "Set HUBSPOT_ACCESS_TOKEN first." });
+  }
+  const selectedRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!selectedRows.length) {
+    return res.status(400).json({ error: "No rows selected." });
+  }
+  const normalizedRows = selectedRows
+    .map((r) => ({
+      email: String(r?.email || "")
+        .trim()
+        .toLowerCase(),
+      first_name: String(r?.first_name || "").trim(),
+      last_name: String(r?.last_name || "").trim(),
+      company_name: String(r?.company_name || "").trim(),
+      company_title: String(r?.company_title || "").trim(),
+      city: String(r?.city || "").trim(),
+      state_province_code: String(r?.state_province_code || "").trim(),
+      postal_code: String(r?.postal_code || "").trim(),
+      country_code: String(r?.country_code || "").trim(),
+      sesip_committee_member: r?.sesip_committee_member,
+      se_committee_member: r?.se_committee_member,
+      tes_committee_member: r?.tes_committee_member,
+      automotive_task_force: r?.automotive_task_force,
+      china_task_force: r?.china_task_force,
+      digital_wallets_task_force: r?.digital_wallets_task_force,
+      japan_task_force: r?.japan_task_force,
+      security_task_force: r?.security_task_force,
+      trusted_open_source_silicon_tf: r?.trusted_open_source_silicon_tf
+    }))
+    .filter((r) => r.email);
+  if (!normalizedRows.length) {
+    return res.status(400).json({ error: "No selected rows have an email." });
+  }
+  try {
+    const { resolvedByKey, resolution } = await resolveHubspotCustomFields(
+      hubspotToken
+    );
+    const hsProperties = [
+      "firstname",
+      "lastname",
+      "company",
+      "email",
+      "jobtitle",
+      "city",
+      "state",
+      "zip",
+      "country",
+      ...Object.values(resolvedByKey).filter(Boolean)
+    ];
+    const hs = await checkContactsExistInHubspot(
+      hubspotToken,
+      normalizedRows,
+      hsProperties
+    );
+    const existingByEmail = new Map();
+    for (const c of hs.foundContacts || []) {
+      const email = String(c?.properties?.email || "")
+        .trim()
+        .toLowerCase();
+      if (email) existingByEmail.set(email, c.properties || {});
+    }
+    const inputs = normalizedRows.map((row) => {
+      const existing = existingByEmail.get(row.email) || null;
+      const properties = { email: row.email };
+      const standardPairs = [
+        ["firstname", row.first_name],
+        ["lastname", row.last_name],
+        ["company", row.company_name],
+        ["jobtitle", row.company_title],
+        ["city", row.city],
+        ["state", row.state_province_code],
+        ["zip", row.postal_code],
+        ["country", row.country_code]
+      ];
+      for (const [hsKey, hlValue] of standardPairs) {
+        const next = String(hlValue || "").trim();
+        if (!next) continue;
+        if (!existing) {
+          properties[hsKey] = next;
+          continue;
+        }
+        const prev = String(existing[hsKey] || "").trim();
+        if (!prev) properties[hsKey] = next;
+      }
+      const customPairs = [
+        ["sesip_committee_member", row.sesip_committee_member],
+        ["se_committee_member", row.se_committee_member],
+        ["tes_committee_member", row.tes_committee_member],
+        ["automotive_task_force", row.automotive_task_force],
+        ["china_task_force", row.china_task_force],
+        ["digital_wallets_task_force", row.digital_wallets_task_force],
+        ["japan_task_force", row.japan_task_force],
+        ["security_task_force", row.security_task_force],
+        ["trusted_open_source_silicon_tf", row.trusted_open_source_silicon_tf]
+      ];
+      for (const [key, raw] of customPairs) {
+        const hsKey = resolvedByKey[key];
+        if (!hsKey) continue;
+        properties[hsKey] = normalizeHubspotBoolString(raw);
+      }
+      return {
+        id: row.email,
+        idProperty: "email",
+        properties
+      };
+    });
+    const result = await upsertHubspotContactInputs(hubspotToken, inputs);
+    return res.json({
+      ok: true,
+      selected: normalizedRows.length,
+      existing: hs.found,
+      createdOrUpdated: result.results,
+      attempted: result.attempted,
+      errors: result.errors,
+      hubspotCustomFieldResolution: resolution
+    });
+  } catch (e) {
+    return res.status(500).json({ error: String(e.message || e) });
   }
 });
 

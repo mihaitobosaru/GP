@@ -126,6 +126,42 @@ export async function upsertContactsToHubspot(accessToken, userRows, fieldMap) {
 }
 
 /**
+ * Upsert pre-built HubSpot contact inputs (id=email).
+ *
+ * @param {string} accessToken
+ * @param {Array<{id:string,idProperty:string,properties:Record<string,string>}>} inputs
+ * @returns {Promise<{ attempted: number, results: number, errors: { status?: number, body: string }[] }>}
+ */
+export async function upsertHubspotContactInputs(accessToken, inputs) {
+  const safeInputs = Array.isArray(inputs) ? inputs.filter(Boolean) : [];
+  const errors = [];
+  let results = 0;
+  for (let i = 0; i < safeInputs.length; i += BATCH_SIZE) {
+    const chunk = safeInputs.slice(i, i + BATCH_SIZE);
+    const res = await fetch(UPSERT_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ inputs: chunk })
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      errors.push({ status: res.status, body: text.slice(0, 2000) });
+      continue;
+    }
+    try {
+      const data = JSON.parse(text);
+      results += Array.isArray(data.results) ? data.results.length : chunk.length;
+    } catch {
+      results += chunk.length;
+    }
+  }
+  return { attempted: safeInputs.length, results, errors };
+}
+
+/**
  * Check if contacts already exist in HubSpot by email.
  *
  * @param {string} accessToken - Private app token (or OAuth access token)

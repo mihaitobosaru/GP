@@ -68,6 +68,10 @@ const dbUsersNext = document.getElementById("dbUsersNext");
 const dbUsersPage = document.getElementById("dbUsersPage");
 const memberUpdatesTableStatus = document.getElementById("memberUpdatesTableStatus");
 const memberUpdatesTableWrap = document.getElementById("memberUpdatesTableWrap");
+const memberUpdatesSyncSelectedBtn = document.getElementById(
+  "memberUpdatesSyncSelectedBtn"
+);
+const memberUpdatesSyncStatus = document.getElementById("memberUpdatesSyncStatus");
 const memberUpdatesHubspotFoundStatus = document.getElementById(
   "memberUpdatesHubspotFoundStatus"
 );
@@ -77,6 +81,8 @@ const memberUpdatesHubspotFoundWrap = document.getElementById(
 
 let dbUsersOffset = 0;
 const dbUsersLimit = 100;
+let memberUpdatesPreviewRows = [];
+const memberUpdatesSelectedEmails = new Set();
 /** Column keys that map to server-side ORDER BY (see db.mjs USER_SORT_EXPR). */
 const DB_USER_SORTABLE = new Set([
   "contact_key",
@@ -135,6 +141,7 @@ function renderMemberUpdatesHubspotTable(preview) {
   if (!memberUpdatesTableWrap || !memberUpdatesTableStatus) return;
   memberUpdatesTableWrap.innerHTML = "";
   let rows = Array.isArray(preview?.rows) ? [...preview.rows] : [];
+  memberUpdatesPreviewRows = rows;
   const labels = preview?.columns || {};
   if (!rows.length) {
     memberUpdatesTableStatus.textContent = "No matched users to sync to HubSpot.";
@@ -156,6 +163,26 @@ function renderMemberUpdatesHubspotTable(preview) {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
+  const selectAllTh = document.createElement("th");
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.checked = rows.length > 0 && rows.every((r) => memberUpdatesSelectedEmails.has(String(r.email || "").trim().toLowerCase()));
+  selectAll.onchange = () => {
+    if (selectAll.checked) {
+      rows.forEach((r) => {
+        const email = String(r.email || "").trim().toLowerCase();
+        if (email) memberUpdatesSelectedEmails.add(email);
+      });
+    } else {
+      rows.forEach((r) => {
+        const email = String(r.email || "").trim().toLowerCase();
+        if (email) memberUpdatesSelectedEmails.delete(email);
+      });
+    }
+    renderMemberUpdatesHubspotTable(preview);
+  };
+  selectAllTh.appendChild(selectAll);
+  hr.appendChild(selectAllTh);
   const cols = memberUpdatesDefaultColumns.filter((c) =>
     rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
   );
@@ -169,6 +196,18 @@ function renderMemberUpdatesHubspotTable(preview) {
   const tbody = document.createElement("tbody");
   rows.forEach((r) => {
     const tr = document.createElement("tr");
+    const email = String(r.email || "").trim().toLowerCase();
+    const selTd = document.createElement("td");
+    const rowCb = document.createElement("input");
+    rowCb.type = "checkbox";
+    rowCb.checked = Boolean(email && memberUpdatesSelectedEmails.has(email));
+    rowCb.onchange = () => {
+      if (!email) return;
+      if (rowCb.checked) memberUpdatesSelectedEmails.add(email);
+      else memberUpdatesSelectedEmails.delete(email);
+    };
+    selTd.appendChild(rowCb);
+    tr.appendChild(selTd);
     cols.forEach((c) => {
       const td = document.createElement("td");
       const v = r[c];
@@ -750,6 +789,9 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
     const daysRaw = document.getElementById("memberUpdatesDays")?.value || "60";
     const days = Math.min(3660, Math.max(1, parseInt(daysRaw, 10) || 60));
     memberUpdatesProgress.textContent = "Loading…";
+    memberUpdatesSelectedEmails.clear();
+    memberUpdatesPreviewRows = [];
+    if (memberUpdatesSyncStatus) memberUpdatesSyncStatus.textContent = "";
     if (memberUpdatesTableStatus) memberUpdatesTableStatus.textContent = "";
     if (memberUpdatesTableWrap) memberUpdatesTableWrap.innerHTML = "";
     if (memberUpdatesHubspotFoundStatus) memberUpdatesHubspotFoundStatus.textContent = "";
@@ -804,6 +846,36 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
         memberUpdatesHubspotFoundStatus.textContent =
           "Could not load HubSpot found-users table.";
       }
+    }
+  };
+}
+
+if (memberUpdatesSyncSelectedBtn) {
+  memberUpdatesSyncSelectedBtn.onclick = async () => {
+    if (!memberUpdatesSyncStatus) return;
+    const selected = memberUpdatesPreviewRows.filter((r) =>
+      memberUpdatesSelectedEmails.has(String(r.email || "").trim().toLowerCase())
+    );
+    if (!selected.length) {
+      memberUpdatesSyncStatus.textContent = "Select at least one contact to sync.";
+      return;
+    }
+    memberUpdatesSyncStatus.textContent = `Syncing ${selected.length} contact(s)…`;
+    try {
+      const res = await fetch("/api/db/member-updates/sync-hubspot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: selected })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+      let msg = `Synced ${data.createdOrUpdated}/${data.attempted} selected contact(s).`;
+      if (data.errors && data.errors.length) {
+        msg += ` ${data.errors.length} batch error(s); check server logs.`;
+      }
+      memberUpdatesSyncStatus.textContent = msg;
+    } catch (e) {
+      memberUpdatesSyncStatus.textContent = "Error: " + e.message;
     }
   };
 }
