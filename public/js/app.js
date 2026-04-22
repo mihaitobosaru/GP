@@ -131,9 +131,9 @@ const memberUpdatesDefaultColumns = [
   "tes_committee_member",
   "automotive_task_force",
   "china_task_force",
+  "digital_wallets_task_force",
   "japan_task_force",
   "security_task_force",
-  "digital_wallets_task_force",
   "trusted_open_source_silicon_tf"
 ];
 
@@ -247,7 +247,8 @@ function renderMemberUpdatesHubspotFoundTable(preview) {
     "state_region",
     "postal_code",
     "country_gp_data",
-    "create_date",
+    "contact_create_date",
+    "contact_last_updated_date",
     "sesip_committee_member",
     "se_committee_member",
     "tes_committee_member",

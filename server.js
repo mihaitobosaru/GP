@@ -1542,6 +1542,8 @@ app.post("/api/db/member-updates", async (req, res) => {
           "state",
           "zip",
           "country",
+          "createdate",
+          "lastmodifieddate",
           ...Object.values(resolvedByKey).filter(Boolean)
         ];
         const hs = await checkContactsExistInHubspot(
@@ -1593,7 +1595,8 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: p.state || "",
             postal_code: p.zip || "",
             country_gp_data: p.country || "",
-            create_date: "",
+            contact_create_date: p.createdate || "",
+            contact_last_updated_date: p.lastmodifieddate || "",
             sesip_committee_member: resolvedByKey.sesip_committee_member
               ? p[resolvedByKey.sesip_committee_member] || ""
               : "",
@@ -1685,6 +1688,8 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: "State/Region",
             postal_code: "Postal Code",
             country_gp_data: "Country (GP Data)",
+            contact_create_date: "Contact Create Date",
+            contact_last_updated_date: "Contact Last Updated Date",
             sesip_committee_member: `SESIP Committee Member (${resolvedNameFor("sesip_committee_member")})`,
             se_committee_member: `SE Committee Member (${resolvedNameFor("se_committee_member")})`,
             tes_committee_member: `TES Committee Member (${resolvedNameFor("tes_committee_member")})`,
@@ -1753,9 +1758,9 @@ app.post("/api/db/member-updates", async (req, res) => {
           tes_committee_member: "TES Committee Member",
           automotive_task_force: "Automotive Task Force",
           china_task_force: "China Task Force",
+          digital_wallets_task_force: "Digital Wallets Task Force",
           japan_task_force: "Japan Task Force",
           security_task_force: "Security Task Force",
-          digital_wallets_task_force: "Digital Wallets Task Force",
           trusted_open_source_silicon_tf: "Trusted Open Source Silicon TF"
         },
         rows: hubspotRows
