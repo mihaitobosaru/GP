@@ -167,6 +167,12 @@ th.sort-desc::after {
   opacity: 0.7;
 }
 
+td.diff-cell {
+  background: #fee2e2;
+  color: #991b1b;
+  font-weight: 600;
+}
+
 .tabs {
   display: flex;
   gap: 8px;

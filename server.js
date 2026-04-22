@@ -1533,13 +1533,101 @@ app.post("/api/db/member-updates", async (req, res) => {
           const email = String(row.email || "").trim().toLowerCase();
           row.hubspot_exists = Boolean(email && existing.has(email));
         }
+        const hlByEmail = new Map();
+        for (const row of hubspotRows) {
+          const email = String(row.email || "").trim().toLowerCase();
+          if (email) hlByEmail.set(email, row);
+        }
+        const normalizeBoolish = (v) => {
+          const s = String(v == null ? "" : v)
+            .trim()
+            .toLowerCase();
+          if (!s) return "";
+          if (["true", "yes", "1", "y"].includes(s)) return "true";
+          if (["false", "no", "0", "n"].includes(s)) return "false";
+          return s;
+        };
+        const normalizeDateish = (v) => {
+          const s = String(v == null ? "" : v).trim();
+          if (!s) return "";
+          const t = Date.parse(s);
+          if (!Number.isFinite(t)) return s.toLowerCase();
+          return new Date(t).toISOString().slice(0, 10);
+        };
         const foundRows = (hs.foundContacts || []).map((item) => {
           const p = item?.properties || {};
+          const email = String(p.email || "").trim().toLowerCase();
+          const hl = hlByEmail.get(email) || {};
+          const comparePairs = [
+            ["create_date", "create_date", "date"],
+            ["sesip_committee_member", "sesip_committee_member", "boolish"],
+            ["se_committee_member", "se_committee_member", "boolish"],
+            ["tes_committee_member", "tes_committee_member", "boolish"],
+            ["automotive_task_force", "automotive_task_force", "boolish"],
+            ["china_task_force", "china_task_force", "boolish"],
+            ["digital_wallets_task_force", "digital_wallets_task_force", "boolish"],
+            ["japan_task_force", "japan_task_force", "boolish"],
+            ["security_task_force", "security_task_force", "boolish"],
+            [
+              "trusted_open_source_silicon_task_force",
+              "trusted_open_source_silicon_tf",
+              "boolish"
+            ]
+          ];
+          const mismatchFields = [];
+          for (const [hsKey, hlKey, kind] of comparePairs) {
+            const hsRaw =
+              hsKey === "create_date"
+                ? resolvedByKey.create_date
+                  ? p[resolvedByKey.create_date] || ""
+                  : ""
+                : hsKey === "sesip_committee_member"
+                  ? resolvedByKey.sesip_committee_member
+                    ? p[resolvedByKey.sesip_committee_member] || ""
+                    : ""
+                  : hsKey === "se_committee_member"
+                    ? resolvedByKey.se_committee_member
+                      ? p[resolvedByKey.se_committee_member] || ""
+                      : ""
+                    : hsKey === "tes_committee_member"
+                      ? resolvedByKey.tes_committee_member
+                        ? p[resolvedByKey.tes_committee_member] || ""
+                        : ""
+                      : hsKey === "automotive_task_force"
+                        ? resolvedByKey.automotive_task_force
+                          ? p[resolvedByKey.automotive_task_force] || ""
+                          : ""
+                        : hsKey === "china_task_force"
+                          ? resolvedByKey.china_task_force
+                            ? p[resolvedByKey.china_task_force] || ""
+                            : ""
+                          : hsKey === "digital_wallets_task_force"
+                            ? resolvedByKey.digital_wallets_task_force
+                              ? p[resolvedByKey.digital_wallets_task_force] || ""
+                              : ""
+                            : hsKey === "japan_task_force"
+                              ? resolvedByKey.japan_task_force
+                                ? p[resolvedByKey.japan_task_force] || ""
+                                : ""
+                              : hsKey === "security_task_force"
+                                ? resolvedByKey.security_task_force
+                                  ? p[resolvedByKey.security_task_force] || ""
+                                  : ""
+                                : resolvedByKey.trusted_open_source_silicon_tf
+                                  ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
+                                  : "";
+            const hlRaw = hl[hlKey];
+            const hsNorm =
+              kind === "date" ? normalizeDateish(hsRaw) : normalizeBoolish(hsRaw);
+            const hlNorm =
+              kind === "date" ? normalizeDateish(hlRaw) : normalizeBoolish(hlRaw);
+            if (hsNorm !== hlNorm) mismatchFields.push(hsKey);
+          }
           return {
             first_name: p.firstname || "",
             last_name: p.lastname || "",
             company_name: p.company || "",
-            email: p.email || "",
+            email: email || p.email || "",
             job_title: p.jobtitle || "",
             city: p.city || "",
             state_region: p.state || "",
@@ -1573,7 +1661,8 @@ app.post("/api/db/member-updates", async (req, res) => {
             trusted_open_source_silicon_task_force:
               resolvedByKey.trusted_open_source_silicon_tf
                 ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
-                : ""
+                : "",
+            mismatch_fields: mismatchFields
           };
         });
         foundRows.sort((a, b) => String(a.email).localeCompare(String(b.email)));

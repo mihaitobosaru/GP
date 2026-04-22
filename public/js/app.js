@@ -235,9 +235,15 @@ function renderMemberUpdatesHubspotFoundTable(preview) {
   const tbody = document.createElement("tbody");
   rows.forEach((r) => {
     const tr = document.createElement("tr");
+    const mismatchSet = new Set(
+      Array.isArray(r.mismatch_fields) ? r.mismatch_fields : []
+    );
     cols.forEach((c) => {
       const td = document.createElement("td");
       td.textContent = r[c] == null ? "" : String(r[c]);
+      if (mismatchSet.has(c)) {
+        td.classList.add("diff-cell");
+      }
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
