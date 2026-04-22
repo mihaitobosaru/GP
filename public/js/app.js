@@ -225,9 +225,26 @@ function renderMemberUpdatesHubspotFoundTable(preview) {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
+  const splitHeaderLabel = (label) => {
+    const text = String(label || "").trim();
+    const match = text.match(/^(.*)\s\(([^)]+)\)$/);
+    if (!match) return { main: text, sub: "" };
+    return { main: match[1].trim(), sub: `(${match[2].trim()})` };
+  };
   cols.forEach((c) => {
     const th = document.createElement("th");
-    th.textContent = labels[c] || c;
+    th.classList.add("two-line-header");
+    const { main, sub } = splitHeaderLabel(labels[c] || c);
+    const mainDiv = document.createElement("div");
+    mainDiv.className = "header-main";
+    mainDiv.textContent = main;
+    th.appendChild(mainDiv);
+    if (sub) {
+      const subDiv = document.createElement("div");
+      subDiv.className = "header-sub";
+      subDiv.textContent = sub;
+      th.appendChild(subDiv);
+    }
     hr.appendChild(th);
   });
   thead.appendChild(hr);

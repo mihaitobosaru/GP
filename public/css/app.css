@@ -167,6 +167,25 @@ th.sort-desc::after {
   opacity: 0.7;
 }
 
+th.two-line-header {
+  white-space: normal;
+  min-width: 130px;
+}
+
+th .header-main {
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+th .header-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #6b7280;
+  line-height: 1.1;
+  word-break: break-all;
+}
+
 td.diff-cell {
   background: #fee2e2;
   color: #991b1b;
