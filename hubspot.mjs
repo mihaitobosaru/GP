@@ -5,6 +5,7 @@
 
 const BATCH_SIZE = 100;
 const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert";
+const BATCH_READ_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read";
 
 function defaultContactFieldMap() {
   return {
@@ -121,4 +122,69 @@ export async function upsertContactsToHubspot(accessToken, userRows, fieldMap) {
   }
 
   return { attempted: inputs.length, results, errors };
+}
+
+/**
+ * Check if contacts already exist in HubSpot by email.
+ *
+ * @param {string} accessToken - Private app token (or OAuth access token)
+ * @param {object[]} userRows - SQLite user rows (must include email)
+ * @returns {Promise<{ checked: number, found: number, missing: number, existingEmails: Set<string>, errors: { status?: number, body: string }[] }>}
+ */
+export async function checkContactsExistInHubspot(accessToken, userRows) {
+  const uniqueEmails = Array.from(
+    new Set(
+      userRows
+        .map((row) => String(row?.email || "").trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+
+  const existingEmails = new Set();
+  const errors = [];
+
+  for (let i = 0; i < uniqueEmails.length; i += BATCH_SIZE) {
+    const chunk = uniqueEmails.slice(i, i + BATCH_SIZE);
+    const res = await fetch(BATCH_READ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        idProperty: "email",
+        properties: ["email"],
+        inputs: chunk.map((email) => ({ id: email }))
+      })
+    });
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      errors.push({
+        status: res.status,
+        body: String(text || JSON.stringify(data)).slice(0, 2000)
+      });
+      continue;
+    }
+
+    const results = Array.isArray(data?.results) ? data.results : [];
+    for (const item of results) {
+      const email = String(item?.properties?.email || "").trim().toLowerCase();
+      if (email) existingEmails.add(email);
+    }
+  }
+
+  return {
+    checked: uniqueEmails.length,
+    found: existingEmails.size,
+    missing: Math.max(0, uniqueEmails.length - existingEmails.size),
+    existingEmails,
+    errors
+  };
 }

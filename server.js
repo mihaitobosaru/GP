@@ -20,8 +20,7 @@ import {
   getMembershipCommunityKeysByContactKeys
 } from "./db.mjs";
 import {
-  upsertContactsToHubspot,
-  getHubspotContactFieldMap
+  checkContactsExistInHubspot
 } from "./hubspot.mjs";
 import {
   buildHubspotAuthorizeUrl,
@@ -1458,7 +1457,7 @@ app.post("/api/db/member-updates", async (req, res) => {
     if (!hubspotToken) {
       hubspot = {
         skipped: true,
-        reason: "Set HUBSPOT_ACCESS_TOKEN to push contacts to HubSpot."
+        reason: "Set HUBSPOT_ACCESS_TOKEN to check contacts in HubSpot."
       };
     } else if (!hubspotRows.length) {
       hubspot = {
@@ -1467,25 +1466,27 @@ app.post("/api/db/member-updates", async (req, res) => {
       };
     } else {
       try {
-        const hs = await upsertContactsToHubspot(
-          hubspotToken,
-          hubspotRows,
-          getHubspotContactFieldMap()
-        );
+        const hs = await checkContactsExistInHubspot(hubspotToken, hubspotRows);
+        const existing = hs.existingEmails || new Set();
+        for (const row of hubspotRows) {
+          const email = String(row.email || "").trim().toLowerCase();
+          row.hubspot_exists = Boolean(email && existing.has(email));
+        }
         hubspot = {
           skipped: false,
-          attempted: hs.attempted,
-          resultsReported: hs.results,
+          checked: hs.checked,
+          found: hs.found,
+          missing: hs.missing,
           batchErrors: hs.errors.length ? hs.errors : undefined
         };
         if (hs.errors.length) {
-          console.error("[hubspot] batch upsert errors:", hs.errors);
+          console.error("[hubspot] batch existence-check errors:", hs.errors);
         }
       } catch (err) {
         hubspot = {
           skipped: false,
           error: err.message,
-          attempted: hubspotRows.length
+          checked: hubspotRows.length
         };
       }
     }
@@ -1520,6 +1521,7 @@ app.post("/api/db/member-updates", async (req, res) => {
           membership_status: "Membership Status",
           member_update_join: "Join event (this run)",
           member_update_removal: "Removal event (this run)",
+          hubspot_exists: "Exists in HubSpot",
           sesip_committee_member: "SESIP Committee Member",
           se_committee_member: "SE Committee Member",
           tes_committee_member: "TES Committee Member",

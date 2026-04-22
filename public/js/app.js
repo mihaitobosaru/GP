@@ -668,7 +668,7 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
         } else if (h.error) {
           msg += ` HubSpot error: ${h.error}`;
         } else {
-          msg += ` HubSpot: batch upsert reported ${h.resultsReported}/${h.attempted} contacts.`;
+          msg += ` HubSpot: found ${h.found}/${h.checked} existing contacts; missing ${h.missing}.`;
           if (h.batchErrors && h.batchErrors.length) {
             msg += ` (${h.batchErrors.length} batch request(s) failed — check server logs.)`;
           }
