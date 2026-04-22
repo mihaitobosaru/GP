@@ -1542,11 +1542,15 @@ app.post("/api/db/member-updates", async (req, res) => {
           const s = String(v == null ? "" : v)
             .trim()
             .toLowerCase();
-          if (!s) return "";
+          if (!s) return "false";
           if (["true", "yes", "1", "y"].includes(s)) return "true";
           if (["false", "no", "0", "n"].includes(s)) return "false";
           return s;
         };
+        const normalizeTextish = (v) =>
+          String(v == null ? "" : v)
+            .trim()
+            .toLowerCase();
         const normalizeDateish = (v) => {
           const s = String(v == null ? "" : v).trim();
           if (!s) return "";
@@ -1558,72 +1562,7 @@ app.post("/api/db/member-updates", async (req, res) => {
           const p = item?.properties || {};
           const email = String(p.email || "").trim().toLowerCase();
           const hl = hlByEmail.get(email) || {};
-          const comparePairs = [
-            ["create_date", "create_date", "date"],
-            ["sesip_committee_member", "sesip_committee_member", "boolish"],
-            ["se_committee_member", "se_committee_member", "boolish"],
-            ["tes_committee_member", "tes_committee_member", "boolish"],
-            ["automotive_task_force", "automotive_task_force", "boolish"],
-            ["china_task_force", "china_task_force", "boolish"],
-            ["digital_wallets_task_force", "digital_wallets_task_force", "boolish"],
-            ["japan_task_force", "japan_task_force", "boolish"],
-            ["security_task_force", "security_task_force", "boolish"],
-            [
-              "trusted_open_source_silicon_task_force",
-              "trusted_open_source_silicon_tf",
-              "boolish"
-            ]
-          ];
-          const mismatchFields = [];
-          for (const [hsKey, hlKey, kind] of comparePairs) {
-            const hsRaw =
-              hsKey === "create_date"
-                ? resolvedByKey.create_date
-                  ? p[resolvedByKey.create_date] || ""
-                  : ""
-                : hsKey === "sesip_committee_member"
-                  ? resolvedByKey.sesip_committee_member
-                    ? p[resolvedByKey.sesip_committee_member] || ""
-                    : ""
-                  : hsKey === "se_committee_member"
-                    ? resolvedByKey.se_committee_member
-                      ? p[resolvedByKey.se_committee_member] || ""
-                      : ""
-                    : hsKey === "tes_committee_member"
-                      ? resolvedByKey.tes_committee_member
-                        ? p[resolvedByKey.tes_committee_member] || ""
-                        : ""
-                      : hsKey === "automotive_task_force"
-                        ? resolvedByKey.automotive_task_force
-                          ? p[resolvedByKey.automotive_task_force] || ""
-                          : ""
-                        : hsKey === "china_task_force"
-                          ? resolvedByKey.china_task_force
-                            ? p[resolvedByKey.china_task_force] || ""
-                            : ""
-                          : hsKey === "digital_wallets_task_force"
-                            ? resolvedByKey.digital_wallets_task_force
-                              ? p[resolvedByKey.digital_wallets_task_force] || ""
-                              : ""
-                            : hsKey === "japan_task_force"
-                              ? resolvedByKey.japan_task_force
-                                ? p[resolvedByKey.japan_task_force] || ""
-                                : ""
-                              : hsKey === "security_task_force"
-                                ? resolvedByKey.security_task_force
-                                  ? p[resolvedByKey.security_task_force] || ""
-                                  : ""
-                                : resolvedByKey.trusted_open_source_silicon_tf
-                                  ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
-                                  : "";
-            const hlRaw = hl[hlKey];
-            const hsNorm =
-              kind === "date" ? normalizeDateish(hsRaw) : normalizeBoolish(hsRaw);
-            const hlNorm =
-              kind === "date" ? normalizeDateish(hlRaw) : normalizeBoolish(hlRaw);
-            if (hsNorm !== hlNorm) mismatchFields.push(hsKey);
-          }
-          return {
+          const hsValues = {
             first_name: p.firstname || "",
             last_name: p.lastname || "",
             company_name: p.company || "",
@@ -1661,7 +1600,53 @@ app.post("/api/db/member-updates", async (req, res) => {
             trusted_open_source_silicon_task_force:
               resolvedByKey.trusted_open_source_silicon_tf
                 ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
-                : "",
+                : ""
+          };
+          const comparePairs = [
+            ["first_name", "first_name", "text"],
+            ["last_name", "last_name", "text"],
+            ["company_name", "company_name", "text"],
+            ["email", "email", "text"],
+            ["job_title", "company_title", "text"],
+            ["city", "city", "text"],
+            ["state_region", "state_province_code", "text"],
+            ["postal_code", "postal_code", "text"],
+            ["country_gp_data", "country_code", "text"],
+            ["create_date", "create_date", "date"],
+            ["sesip_committee_member", "sesip_committee_member", "boolish"],
+            ["se_committee_member", "se_committee_member", "boolish"],
+            ["tes_committee_member", "tes_committee_member", "boolish"],
+            ["automotive_task_force", "automotive_task_force", "boolish"],
+            ["china_task_force", "china_task_force", "boolish"],
+            ["digital_wallets_task_force", "digital_wallets_task_force", "boolish"],
+            ["japan_task_force", "japan_task_force", "boolish"],
+            ["security_task_force", "security_task_force", "boolish"],
+            [
+              "trusted_open_source_silicon_task_force",
+              "trusted_open_source_silicon_tf",
+              "boolish"
+            ]
+          ];
+          const mismatchFields = [];
+          for (const [hsKey, hlKey, kind] of comparePairs) {
+            const hsRaw = hsValues[hsKey];
+            const hlRaw = hl[hlKey];
+            const hsNorm =
+              kind === "date"
+                ? normalizeDateish(hsRaw)
+                : kind === "boolish"
+                  ? normalizeBoolish(hsRaw)
+                  : normalizeTextish(hsRaw);
+            const hlNorm =
+              kind === "date"
+                ? normalizeDateish(hlRaw)
+                : kind === "boolish"
+                  ? normalizeBoolish(hlRaw)
+                  : normalizeTextish(hlRaw);
+            if (hsNorm !== hlNorm) mismatchFields.push(hsKey);
+          }
+          return {
+            ...hsValues,
             mismatch_fields: mismatchFields
           };
         });
