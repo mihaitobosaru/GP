@@ -97,6 +97,7 @@ let dbUsersSortDir = "desc";
 let syncPollTimer = null;
 
 const memberUpdatesDefaultColumns = [
+  "hubspot_exists",
   "first_name",
   "last_name",
   "company_name",
