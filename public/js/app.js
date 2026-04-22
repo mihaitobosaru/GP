@@ -68,6 +68,12 @@ const dbUsersNext = document.getElementById("dbUsersNext");
 const dbUsersPage = document.getElementById("dbUsersPage");
 const memberUpdatesTableStatus = document.getElementById("memberUpdatesTableStatus");
 const memberUpdatesTableWrap = document.getElementById("memberUpdatesTableWrap");
+const memberUpdatesHubspotFoundStatus = document.getElementById(
+  "memberUpdatesHubspotFoundStatus"
+);
+const memberUpdatesHubspotFoundWrap = document.getElementById(
+  "memberUpdatesHubspotFoundWrap"
+);
 
 let dbUsersOffset = 0;
 const dbUsersLimit = 100;
@@ -179,6 +185,66 @@ function renderMemberUpdatesHubspotTable(preview) {
   memberUpdatesTableWrap.appendChild(table);
   memberUpdatesTableStatus.textContent =
     `HubSpot sync preview: ${rows.length} user(s) — ${nJoin} with join event(s), ${nRemoval} with removal event(s) (columns “Join event” / “Removal event”).`;
+  initSortableTable(table);
+}
+
+function renderMemberUpdatesHubspotFoundTable(preview) {
+  if (!memberUpdatesHubspotFoundWrap || !memberUpdatesHubspotFoundStatus) return;
+  memberUpdatesHubspotFoundWrap.innerHTML = "";
+  const rows = Array.isArray(preview?.rows) ? [...preview.rows] : [];
+  const labels = preview?.columns || {};
+  if (!rows.length) {
+    memberUpdatesHubspotFoundStatus.textContent =
+      "HubSpot users found: 0 (no matched contacts found in HubSpot).";
+    return;
+  }
+  const orderedColumns = [
+    "first_name",
+    "last_name",
+    "company_name",
+    "email",
+    "job_title",
+    "city",
+    "state_region",
+    "postal_code",
+    "country_gp_data",
+    "create_date",
+    "sesip_committee_member",
+    "se_committee_member",
+    "tes_committee_member",
+    "automotive_task_force",
+    "china_task_force",
+    "digital_wallets_task_force",
+    "japan_task_force",
+    "security_task_force",
+    "trusted_open_source_silicon_task_force"
+  ];
+  const cols = orderedColumns.filter((c) =>
+    rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
+  );
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  cols.forEach((c) => {
+    const th = document.createElement("th");
+    th.textContent = labels[c] || c;
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    cols.forEach((c) => {
+      const td = document.createElement("td");
+      td.textContent = r[c] == null ? "" : String(r[c]);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  memberUpdatesHubspotFoundWrap.appendChild(table);
+  memberUpdatesHubspotFoundStatus.textContent = `HubSpot users found: ${rows.length}.`;
   initSortableTable(table);
 }
 
@@ -648,6 +714,8 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
     memberUpdatesProgress.textContent = "Loading…";
     if (memberUpdatesTableStatus) memberUpdatesTableStatus.textContent = "";
     if (memberUpdatesTableWrap) memberUpdatesTableWrap.innerHTML = "";
+    if (memberUpdatesHubspotFoundStatus) memberUpdatesHubspotFoundStatus.textContent = "";
+    if (memberUpdatesHubspotFoundWrap) memberUpdatesHubspotFoundWrap.innerHTML = "";
     try {
       const res = await fetch("/api/db/member-updates", {
         method: "POST",
@@ -677,6 +745,7 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
       }
       memberUpdatesProgress.textContent = msg;
       renderMemberUpdatesHubspotTable(data.hubspotPreview);
+      renderMemberUpdatesHubspotFoundTable(data.hubspotFoundPreview);
       loadDbStats();
       loadDbCommunities();
       loadDbUsersPage();
@@ -684,6 +753,10 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
       memberUpdatesProgress.textContent = "Error: " + e.message;
       if (memberUpdatesTableStatus) {
         memberUpdatesTableStatus.textContent = "Could not load sync preview.";
+      }
+      if (memberUpdatesHubspotFoundStatus) {
+        memberUpdatesHubspotFoundStatus.textContent =
+          "Could not load HubSpot found-users table.";
       }
     }
   };

@@ -1454,6 +1454,7 @@ app.post("/api/db/member-updates", async (req, res) => {
 
     const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
     let hubspot;
+    let hubspotFoundPreview = { columns: {}, rows: [] };
     if (!hubspotToken) {
       hubspot = {
         skipped: true,
@@ -1466,12 +1467,88 @@ app.post("/api/db/member-updates", async (req, res) => {
       };
     } else {
       try {
-        const hs = await checkContactsExistInHubspot(hubspotToken, hubspotRows);
+        const hsProperties = [
+          "firstname",
+          "lastname",
+          "company",
+          "email",
+          "jobtitle",
+          "city",
+          "state",
+          "zip",
+          "country",
+          "hl_create_date",
+          "hl_sesip_committee_member",
+          "hl_se_committee_member",
+          "hl_tes_committee_member",
+          "hl_automotive_task_force",
+          "hl_china_task_force",
+          "hl_digital_wallets_task_force",
+          "hl_japan_task_force",
+          "hl_security_task_force",
+          "hl_trusted_open_source_silicon_tf"
+        ];
+        const hs = await checkContactsExistInHubspot(
+          hubspotToken,
+          hubspotRows,
+          hsProperties
+        );
         const existing = hs.existingEmails || new Set();
         for (const row of hubspotRows) {
           const email = String(row.email || "").trim().toLowerCase();
           row.hubspot_exists = Boolean(email && existing.has(email));
         }
+        const foundRows = (hs.foundContacts || []).map((item) => {
+          const p = item?.properties || {};
+          return {
+            first_name: p.firstname || "",
+            last_name: p.lastname || "",
+            company_name: p.company || "",
+            email: p.email || "",
+            job_title: p.jobtitle || "",
+            city: p.city || "",
+            state_region: p.state || "",
+            postal_code: p.zip || "",
+            country_gp_data: p.country || "",
+            create_date: p.hl_create_date || "",
+            sesip_committee_member: p.hl_sesip_committee_member || "",
+            se_committee_member: p.hl_se_committee_member || "",
+            tes_committee_member: p.hl_tes_committee_member || "",
+            automotive_task_force: p.hl_automotive_task_force || "",
+            china_task_force: p.hl_china_task_force || "",
+            digital_wallets_task_force: p.hl_digital_wallets_task_force || "",
+            japan_task_force: p.hl_japan_task_force || "",
+            security_task_force: p.hl_security_task_force || "",
+            trusted_open_source_silicon_task_force:
+              p.hl_trusted_open_source_silicon_tf || ""
+          };
+        });
+        foundRows.sort((a, b) => String(a.email).localeCompare(String(b.email)));
+        hubspotFoundPreview = {
+          columns: {
+            first_name: "First Name",
+            last_name: "Last Name",
+            company_name: "Company Name",
+            email: "Email",
+            job_title: "Job Title",
+            city: "City",
+            state_region: "State/Region",
+            postal_code: "Postal Code",
+            country_gp_data: "Country (GP Data)",
+            create_date: "Create Date",
+            sesip_committee_member: "SESIP Committee Member",
+            se_committee_member: "SE Committee Member",
+            tes_committee_member: "TES Committee Member",
+            automotive_task_force: "Automotive Task Force",
+            china_task_force: "China Task Force",
+            digital_wallets_task_force: "Digital Wallets Task Force",
+            japan_task_force: "Japan Task Force",
+            security_task_force: "Security Task Force",
+            trusted_open_source_silicon_task_force:
+              "Trusted Open Source Silicon Task Force"
+          },
+          rows: foundRows
+        };
         hubspot = {
           skipped: false,
           checked: hs.checked,
@@ -1534,6 +1611,7 @@ app.post("/api/db/member-updates", async (req, res) => {
         },
         rows: hubspotRows
       },
+      hubspotFoundPreview,
       hubspot
     });
   } catch (e) {

@@ -129,9 +129,10 @@ export async function upsertContactsToHubspot(accessToken, userRows, fieldMap) {
  *
  * @param {string} accessToken - Private app token (or OAuth access token)
  * @param {object[]} userRows - SQLite user rows (must include email)
- * @returns {Promise<{ checked: number, found: number, missing: number, existingEmails: Set<string>, errors: { status?: number, body: string }[] }>}
+ * @param {string[]} [properties] - HubSpot contact properties to return
+ * @returns {Promise<{ checked: number, found: number, missing: number, existingEmails: Set<string>, foundContacts: object[], errors: { status?: number, body: string }[] }>}
  */
-export async function checkContactsExistInHubspot(accessToken, userRows) {
+export async function checkContactsExistInHubspot(accessToken, userRows, properties = []) {
   const uniqueEmails = Array.from(
     new Set(
       userRows
@@ -141,7 +142,9 @@ export async function checkContactsExistInHubspot(accessToken, userRows) {
   );
 
   const existingEmails = new Set();
+  const foundContacts = [];
   const errors = [];
+  const propList = Array.from(new Set(["email", ...properties])).filter(Boolean);
 
   for (let i = 0; i < uniqueEmails.length; i += BATCH_SIZE) {
     const chunk = uniqueEmails.slice(i, i + BATCH_SIZE);
@@ -153,7 +156,7 @@ export async function checkContactsExistInHubspot(accessToken, userRows) {
       },
       body: JSON.stringify({
         idProperty: "email",
-        properties: ["email"],
+        properties: propList,
         inputs: chunk.map((email) => ({ id: email }))
       })
     });
@@ -177,6 +180,7 @@ export async function checkContactsExistInHubspot(accessToken, userRows) {
     for (const item of results) {
       const email = String(item?.properties?.email || "").trim().toLowerCase();
       if (email) existingEmails.add(email);
+      foundContacts.push(item);
     }
   }
 
@@ -185,6 +189,7 @@ export async function checkContactsExistInHubspot(accessToken, userRows) {
     found: existingEmails.size,
     missing: Math.max(0, uniqueEmails.length - existingEmails.size),
     existingEmails,
+    foundContacts,
     errors
   };
 }
