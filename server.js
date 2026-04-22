@@ -445,6 +445,12 @@ function getHubspotOAuthCookies(req) {
   return { access: c.hs_oauth_at || "", refresh: c.hs_oauth_rt || "" };
 }
 
+function getHubspotApiToken(req) {
+  const { access } = getHubspotOAuthCookies(req);
+  if (access) return access;
+  return String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+}
+
 function setHubspotOAuthCookies(res, req, tokenData) {
   const access = String(tokenData.access_token || "").trim();
   const refresh = String(tokenData.refresh_token || "").trim();
@@ -1067,9 +1073,11 @@ app.get("/hubspot/oauth/callback", async (req, res) => {
 
 app.get("/api/hubspot/oauth/status", (req, res) => {
   const { access, refresh } = getHubspotOAuthCookies(req);
+  const envToken = String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
   res.json({
     configured: Boolean(HUBSPOT_OAUTH_CLIENT_ID && HUBSPOT_OAUTH_CLIENT_SECRET),
-    connected: Boolean(access),
+    connected: Boolean(access || envToken),
+    connectionType: access ? "oauth-cookie" : envToken ? "env-token" : "none",
     hasRefresh: Boolean(refresh)
   });
 });
@@ -1099,11 +1107,12 @@ app.post("/api/hubspot/oauth/disconnect", (req, res) => {
 });
 
 app.get("/api/hubspot/contacts", async (req, res) => {
-  let { access, refresh } = getHubspotOAuthCookies(req);
+  let { refresh } = getHubspotOAuthCookies(req);
+  let access = getHubspotApiToken(req);
   if (!access) {
     return res.status(401).json({
       error:
-        "HubSpot OAuth not connected. Open the HubSpot tab and click Connect HubSpot."
+        "HubSpot is not connected. Either connect OAuth or set HUBSPOT_ACCESS_TOKEN."
     });
   }
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
