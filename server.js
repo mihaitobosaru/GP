@@ -1577,6 +1577,9 @@ app.post("/api/db/member-updates", async (req, res) => {
           };
         });
         foundRows.sort((a, b) => String(a.email).localeCompare(String(b.email)));
+        const resolvedNameFor = (key) =>
+          hubspotCustomFieldResolution.find((r) => r.key === key)?.resolvedInternalName ||
+          "unresolved";
         hubspotFoundPreview = {
           columns: {
             first_name: "First Name",
@@ -1588,17 +1591,17 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: "State/Region",
             postal_code: "Postal Code",
             country_gp_data: "Country (GP Data)",
-            create_date: "Create Date",
-            sesip_committee_member: "SESIP Committee Member",
-            se_committee_member: "SE Committee Member",
-            tes_committee_member: "TES Committee Member",
-            automotive_task_force: "Automotive Task Force",
-            china_task_force: "China Task Force",
-            digital_wallets_task_force: "Digital Wallets Task Force",
-            japan_task_force: "Japan Task Force",
-            security_task_force: "Security Task Force",
+            create_date: `Create Date (${resolvedNameFor("create_date")})`,
+            sesip_committee_member: `SESIP Committee Member (${resolvedNameFor("sesip_committee_member")})`,
+            se_committee_member: `SE Committee Member (${resolvedNameFor("se_committee_member")})`,
+            tes_committee_member: `TES Committee Member (${resolvedNameFor("tes_committee_member")})`,
+            automotive_task_force: `Automotive Task Force (${resolvedNameFor("automotive_task_force")})`,
+            china_task_force: `China Task Force (${resolvedNameFor("china_task_force")})`,
+            digital_wallets_task_force: `Digital Wallets Task Force (${resolvedNameFor("digital_wallets_task_force")})`,
+            japan_task_force: `Japan Task Force (${resolvedNameFor("japan_task_force")})`,
+            security_task_force: `Security Task Force (${resolvedNameFor("security_task_force")})`,
             trusted_open_source_silicon_task_force:
-              "Trusted Open Source Silicon Task Force"
+              `Trusted Open Source Silicon Task Force (${resolvedNameFor("trusted_open_source_silicon_tf")})`
           },
           rows: foundRows
         };
