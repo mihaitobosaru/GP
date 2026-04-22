@@ -248,6 +248,21 @@ function renderMemberUpdatesHubspotFoundTable(preview) {
   initSortableTable(table);
 }
 
+function formatCustomFieldResolution(resolution) {
+  const items = Array.isArray(resolution) ? resolution : [];
+  if (!items.length) return "";
+  const unresolved = items.filter((r) => r.resolvedBy === "unresolved");
+  if (!unresolved.length) return "";
+  return (
+    " Unresolved custom fields: " +
+    unresolved
+      .map((r) => String(r.label || r.key || "").trim())
+      .filter(Boolean)
+      .join(", ") +
+    "."
+  );
+}
+
 function showTab(which) {
   const isExplorer = which === "explorer";
   const isDatabase = which === "database";
@@ -746,6 +761,14 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
       memberUpdatesProgress.textContent = msg;
       renderMemberUpdatesHubspotTable(data.hubspotPreview);
       renderMemberUpdatesHubspotFoundTable(data.hubspotFoundPreview);
+      if (memberUpdatesHubspotFoundStatus) {
+        const unresolvedMsg = formatCustomFieldResolution(
+          data.hubspotCustomFieldResolution
+        );
+        if (unresolvedMsg) {
+          memberUpdatesHubspotFoundStatus.textContent += unresolvedMsg;
+        }
+      }
       loadDbStats();
       loadDbCommunities();
       loadDbUsersPage();

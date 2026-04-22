@@ -6,6 +6,7 @@
 const BATCH_SIZE = 100;
 const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert";
 const BATCH_READ_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read";
+const CONTACT_PROPERTIES_URL = "https://api.hubapi.com/crm/v3/properties/contacts";
 
 function defaultContactFieldMap() {
   return {
@@ -192,4 +193,49 @@ export async function checkContactsExistInHubspot(accessToken, userRows, propert
     foundContacts,
     errors
   };
+}
+
+/**
+ * Read HubSpot contact property definitions (internal name + label).
+ *
+ * @param {string} accessToken - Private app token (or OAuth access token)
+ * @returns {Promise<Array<{ name: string, label: string }>>}
+ */
+export async function listHubspotContactProperties(accessToken) {
+  const out = [];
+  let after = "";
+  do {
+    const url = new URL(CONTACT_PROPERTIES_URL);
+    url.searchParams.set("limit", "500");
+    if (after) url.searchParams.set("after", after);
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    if (!res.ok) {
+      throw new Error(
+        `HubSpot properties API error ${res.status}: ${String(text || JSON.stringify(data)).slice(0, 1200)}`
+      );
+    }
+    const results = Array.isArray(data?.results) ? data.results : [];
+    for (const p of results) {
+      const name = String(p?.name || "").trim();
+      if (!name) continue;
+      out.push({
+        name,
+        label: String(p?.label || "").trim()
+      });
+    }
+    after = String(data?.paging?.next?.after || "").trim();
+  } while (after);
+  return out;
 }

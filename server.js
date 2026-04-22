@@ -20,7 +20,9 @@ import {
   getMembershipCommunityKeysByContactKeys
 } from "./db.mjs";
 import {
-  checkContactsExistInHubspot
+  checkContactsExistInHubspot,
+  getHubspotContactFieldMap,
+  listHubspotContactProperties
 } from "./hubspot.mjs";
 import {
   buildHubspotAuthorizeUrl,
@@ -1455,6 +1457,7 @@ app.post("/api/db/member-updates", async (req, res) => {
     const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
     let hubspot;
     let hubspotFoundPreview = { columns: {}, rows: [] };
+    let hubspotCustomFieldResolution = [];
     if (!hubspotToken) {
       hubspot = {
         skipped: true,
@@ -1467,6 +1470,47 @@ app.post("/api/db/member-updates", async (req, res) => {
       };
     } else {
       try {
+        const requestedCustomFields = [
+          { key: "create_date", label: "Create Date" },
+          { key: "sesip_committee_member", label: "SESIP Committee Member" },
+          { key: "se_committee_member", label: "SE Committee Member" },
+          { key: "tes_committee_member", label: "TES Committee Member" },
+          { key: "automotive_task_force", label: "Automotive Task Force" },
+          { key: "china_task_force", label: "China Task Force" },
+          {
+            key: "digital_wallets_task_force",
+            label: "Digital Wallets Task Force"
+          },
+          { key: "japan_task_force", label: "Japan Task Force" },
+          { key: "security_task_force", label: "Security Task Force" },
+          {
+            key: "trusted_open_source_silicon_tf",
+            label: "Trusted Open Source Silicon Task Force"
+          }
+        ];
+        const configuredMap = getHubspotContactFieldMap();
+        const propertyDefs = await listHubspotContactProperties(hubspotToken);
+        const byInternal = new Map(propertyDefs.map((p) => [p.name.toLowerCase(), p]));
+        const byLabel = new Map(
+          propertyDefs.map((p) => [String(p.label || "").trim().toLowerCase(), p])
+        );
+        const resolvedByKey = {};
+        for (const f of requestedCustomFields) {
+          const configuredInternal = String(configuredMap[f.key] || "").trim();
+          const configuredDef = configuredInternal
+            ? byInternal.get(configuredInternal.toLowerCase())
+            : null;
+          const labelDef = byLabel.get(f.label.toLowerCase()) || null;
+          const chosen = configuredDef || labelDef || null;
+          resolvedByKey[f.key] = chosen?.name || "";
+          hubspotCustomFieldResolution.push({
+            key: f.key,
+            label: f.label,
+            configuredInternalName: configuredInternal || null,
+            resolvedInternalName: chosen?.name || null,
+            resolvedBy: configuredDef ? "configured-map" : labelDef ? "label-match" : "unresolved"
+          });
+        }
         const hsProperties = [
           "firstname",
           "lastname",
@@ -1477,16 +1521,7 @@ app.post("/api/db/member-updates", async (req, res) => {
           "state",
           "zip",
           "country",
-          "hl_create_date",
-          "hl_sesip_committee_member",
-          "hl_se_committee_member",
-          "hl_tes_committee_member",
-          "hl_automotive_task_force",
-          "hl_china_task_force",
-          "hl_digital_wallets_task_force",
-          "hl_japan_task_force",
-          "hl_security_task_force",
-          "hl_trusted_open_source_silicon_tf"
+          ...Object.values(resolvedByKey).filter(Boolean)
         ];
         const hs = await checkContactsExistInHubspot(
           hubspotToken,
@@ -1510,17 +1545,35 @@ app.post("/api/db/member-updates", async (req, res) => {
             state_region: p.state || "",
             postal_code: p.zip || "",
             country_gp_data: p.country || "",
-            create_date: p.hl_create_date || "",
-            sesip_committee_member: p.hl_sesip_committee_member || "",
-            se_committee_member: p.hl_se_committee_member || "",
-            tes_committee_member: p.hl_tes_committee_member || "",
-            automotive_task_force: p.hl_automotive_task_force || "",
-            china_task_force: p.hl_china_task_force || "",
-            digital_wallets_task_force: p.hl_digital_wallets_task_force || "",
-            japan_task_force: p.hl_japan_task_force || "",
-            security_task_force: p.hl_security_task_force || "",
+            create_date: resolvedByKey.create_date ? p[resolvedByKey.create_date] || "" : "",
+            sesip_committee_member: resolvedByKey.sesip_committee_member
+              ? p[resolvedByKey.sesip_committee_member] || ""
+              : "",
+            se_committee_member: resolvedByKey.se_committee_member
+              ? p[resolvedByKey.se_committee_member] || ""
+              : "",
+            tes_committee_member: resolvedByKey.tes_committee_member
+              ? p[resolvedByKey.tes_committee_member] || ""
+              : "",
+            automotive_task_force: resolvedByKey.automotive_task_force
+              ? p[resolvedByKey.automotive_task_force] || ""
+              : "",
+            china_task_force: resolvedByKey.china_task_force
+              ? p[resolvedByKey.china_task_force] || ""
+              : "",
+            digital_wallets_task_force: resolvedByKey.digital_wallets_task_force
+              ? p[resolvedByKey.digital_wallets_task_force] || ""
+              : "",
+            japan_task_force: resolvedByKey.japan_task_force
+              ? p[resolvedByKey.japan_task_force] || ""
+              : "",
+            security_task_force: resolvedByKey.security_task_force
+              ? p[resolvedByKey.security_task_force] || ""
+              : "",
             trusted_open_source_silicon_task_force:
-              p.hl_trusted_open_source_silicon_tf || ""
+              resolvedByKey.trusted_open_source_silicon_tf
+                ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
+                : ""
           };
         });
         foundRows.sort((a, b) => String(a.email).localeCompare(String(b.email)));
@@ -1612,6 +1665,7 @@ app.post("/api/db/member-updates", async (req, res) => {
         rows: hubspotRows
       },
       hubspotFoundPreview,
+      hubspotCustomFieldResolution,
       hubspot
     });
   } catch (e) {
