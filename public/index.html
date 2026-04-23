@@ -122,8 +122,27 @@
         <div id="memberUpdatesHubspotFoundWrap" class="tableWrap"></div>
       </div>
       <div class="card" style="margin-top:16px;">
+        <h2>Automation</h2>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:14px;">
+          <input type="checkbox" id="automationEnabled" />
+          Enabled
+        </label>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:14px;">
+          Run every
+          <input type="number" id="automationIntervalDays" min="1" max="3650" value="7" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
+          days
+        </label>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
+          Sync changes from past
+          <input type="number" id="automationLookbackDays" min="1" max="3650" value="7" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
+          days
+        </label>
+        <button type="button" id="automationSaveBtn">Save automation</button>
+        <button type="button" id="automationRunNowBtn">Run now</button>
+        <div id="automationStatus" class="status"></div>
+      </div>
+      <div class="card" style="margin-top:16px;">
         <h2>Test: CRM contacts</h2>
-        <p class="muted" style="margin-top:0;">Uses CRM Contacts API; token must allow reading contacts (classic OAuth: set <code>HUBSPOT_OAUTH_SCOPE</code>; MCP flow grants scopes at install).</p>
         <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
           <input type="checkbox" id="hubspotContactsUpdatedMode" />
           Only contacts updated in last

@@ -85,6 +85,8 @@ const APP_LOGIN_USERNAME = String(process.env.APP_LOGIN_USERNAME || "").trim();
 const APP_LOGIN_PASSWORD = String(process.env.APP_LOGIN_PASSWORD || "").trim();
 const APP_AUTH_COOKIE_NAME = "app_auth";
 const APP_AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+const AUTOMATION_MIN_DAYS = 1;
+const AUTOMATION_MAX_DAYS = 3650;
 const API_USERNAME = (process.env.HIGHERLOGIC_API_USERNAME || "").trim();
 const API_PASSWORD = (process.env.HIGHERLOGIC_API_PASSWORD || "").trim();
 const HIGHERLOGIC_TENANT_KEY = (process.env.HIGHERLOGIC_TENANT_KEY || "").trim();
@@ -234,6 +236,13 @@ function getRequestedHubspotCustomFields() {
   ];
 }
 
+function normalizeAutomationDays(v, fallback) {
+  return Math.min(
+    AUTOMATION_MAX_DAYS,
+    Math.max(AUTOMATION_MIN_DAYS, parseInt(String(v || fallback), 10) || fallback)
+  );
+}
+
 function isAppLoginEnabled() {
   return Boolean(APP_LOGIN_USERNAME && APP_LOGIN_PASSWORD);
 }
@@ -329,6 +338,220 @@ async function resolveHubspotCustomFields(accessToken) {
     });
   }
   return { resolvedByKey, resolution };
+}
+
+async function collectHubspotRowsFromHlUpdates(days, cookieHeader = "") {
+  const clampedDays = normalizeAutomationDays(days, 60);
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - clampedDays * 86400000);
+  const payload = {
+    StartDate: startDate.toISOString(),
+    EndDate: endDate.toISOString()
+  };
+  const syncReq = makeSyncReq(cookieHeader);
+  getActiveBearerToken(syncReq);
+  const data = await hlPost(
+    "/higherlogic/external/api/v2.0/System/GetCommunityMemberUpdates",
+    syncReq,
+    payload
+  );
+  const joins = Array.isArray(data.CommunityJoins) ? data.CommunityJoins : [];
+  const removals = Array.isArray(data.CommunityRemovals) ? data.CommunityRemovals : [];
+  const { stats: applied, touchedContactKeys, joinContactKeys, removalContactKeys } =
+    applyCommunityMemberUpdates(db, {
+      communityJoins: joins,
+      communityRemovals: removals
+    });
+  const rawRows = touchedContactKeys.length
+    ? getUsersByContactKeys(db, touchedContactKeys)
+    : [];
+  const membershipsByContact = getMembershipCommunityKeysByContactKeys(
+    db,
+    touchedContactKeys
+  );
+  const hubspotRows = buildHubspotSyncRows(
+    rawRows,
+    membershipsByContact,
+    new Set(joinContactKeys),
+    new Set(removalContactKeys)
+  );
+  return {
+    days: clampedDays,
+    payload,
+    data,
+    applied,
+    hubspotRows
+  };
+}
+
+async function syncHubspotRowsByEmail(hubspotRows, hubspotToken) {
+  const normalizedRows = (Array.isArray(hubspotRows) ? hubspotRows : [])
+    .map((r) => ({
+      email: String(r?.email || "")
+        .trim()
+        .toLowerCase(),
+      first_name: String(r?.first_name || "").trim(),
+      last_name: String(r?.last_name || "").trim(),
+      company_name: String(r?.company_name || "").trim(),
+      company_title: String(r?.company_title || "").trim(),
+      city: String(r?.city || "").trim(),
+      state_province_code: String(r?.state_province_code || "").trim(),
+      postal_code: String(r?.postal_code || "").trim(),
+      country_code: String(r?.country_code || "").trim(),
+      sesip_committee_member: r?.sesip_committee_member,
+      se_committee_member: r?.se_committee_member,
+      tes_committee_member: r?.tes_committee_member,
+      automotive_task_force: r?.automotive_task_force,
+      china_task_force: r?.china_task_force,
+      digital_wallets_task_force: r?.digital_wallets_task_force,
+      japan_task_force: r?.japan_task_force,
+      security_task_force: r?.security_task_force,
+      trusted_open_source_silicon_tf: r?.trusted_open_source_silicon_tf
+    }))
+    .filter((r) => r.email);
+  const { resolvedByKey, resolution } = await resolveHubspotCustomFields(hubspotToken);
+  const hsProperties = [
+    "firstname",
+    "lastname",
+    "company",
+    "email",
+    "jobtitle",
+    "city",
+    "state",
+    "zip",
+    "country",
+    ...Object.values(resolvedByKey).filter(Boolean)
+  ];
+  const hs = await checkContactsExistInHubspot(hubspotToken, normalizedRows, hsProperties);
+  const existingByEmail = new Map();
+  for (const c of hs.foundContacts || []) {
+    const email = String(c?.properties?.email || "")
+      .trim()
+      .toLowerCase();
+    if (email) existingByEmail.set(email, c.properties || {});
+  }
+  const inputs = normalizedRows.map((row) => {
+    const existing = existingByEmail.get(row.email) || null;
+    const properties = { email: row.email };
+    const standardPairs = [
+      ["firstname", row.first_name],
+      ["lastname", row.last_name],
+      ["company", row.company_name],
+      ["jobtitle", row.company_title],
+      ["city", row.city],
+      ["state", row.state_province_code],
+      ["zip", row.postal_code],
+      ["country", row.country_code]
+    ];
+    for (const [hsKey, hlValue] of standardPairs) {
+      const next = String(hlValue || "").trim();
+      if (!next) continue;
+      if (!existing) {
+        properties[hsKey] = next;
+        continue;
+      }
+      const prev = String(existing[hsKey] || "").trim();
+      if (!prev) properties[hsKey] = next;
+    }
+    const customPairs = [
+      ["sesip_committee_member", row.sesip_committee_member],
+      ["se_committee_member", row.se_committee_member],
+      ["tes_committee_member", row.tes_committee_member],
+      ["automotive_task_force", row.automotive_task_force],
+      ["china_task_force", row.china_task_force],
+      ["digital_wallets_task_force", row.digital_wallets_task_force],
+      ["japan_task_force", row.japan_task_force],
+      ["security_task_force", row.security_task_force],
+      ["trusted_open_source_silicon_tf", row.trusted_open_source_silicon_tf]
+    ];
+    for (const [key, raw] of customPairs) {
+      const hsKey = resolvedByKey[key];
+      if (!hsKey) continue;
+      properties[hsKey] = normalizeHubspotBoolString(raw);
+    }
+    return {
+      id: row.email,
+      idProperty: "email",
+      properties
+    };
+  });
+  const result = await upsertHubspotContactInputs(hubspotToken, inputs);
+  return {
+    selected: normalizedRows.length,
+    existing: hs.found,
+    createdOrUpdated: result.results,
+    attempted: result.attempted,
+    errors: result.errors,
+    hubspotCustomFieldResolution: resolution
+  };
+}
+
+const automationState = {
+  enabled: false,
+  intervalDays: 7,
+  lookbackDays: 7,
+  running: false,
+  lastRunAt: null,
+  lastRunResult: null,
+  lastError: null,
+  nextRunAt: null
+};
+let automationTimer = null;
+
+function stopAutomationTimer() {
+  if (automationTimer) clearInterval(automationTimer);
+  automationTimer = null;
+}
+
+async function runAutomationCycle() {
+  if (!automationState.enabled || automationState.running) return;
+  automationState.running = true;
+  automationState.lastError = null;
+  try {
+    const hubspotToken = String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+    if (!hubspotToken) {
+      throw new Error("HUBSPOT_ACCESS_TOKEN is not configured.");
+    }
+    const collected = await collectHubspotRowsFromHlUpdates(
+      automationState.lookbackDays,
+      ""
+    );
+    const syncResult = await syncHubspotRowsByEmail(collected.hubspotRows, hubspotToken);
+    automationState.lastRunResult = {
+      lookedBackDays: automationState.lookbackDays,
+      hlRows: collected.hubspotRows.length,
+      synced: syncResult.createdOrUpdated,
+      attempted: syncResult.attempted,
+      errors: syncResult.errors?.length || 0
+    };
+    automationState.lastRunAt = new Date().toISOString();
+  } catch (e) {
+    automationState.lastError = String(e?.message || e);
+  } finally {
+    automationState.running = false;
+    const now = Date.now();
+    automationState.nextRunAt = new Date(
+      now + automationState.intervalDays * 24 * 60 * 60 * 1000
+    ).toISOString();
+  }
+}
+
+function startAutomationTimer() {
+  stopAutomationTimer();
+  if (!automationState.enabled) return;
+  if (!automationState.nextRunAt) {
+    automationState.nextRunAt = new Date(
+      Date.now() + automationState.intervalDays * 24 * 60 * 60 * 1000
+    ).toISOString();
+  }
+  automationTimer = setInterval(async () => {
+    if (!automationState.enabled) return;
+    if (automationState.running) return;
+    const nextMs = Date.parse(String(automationState.nextRunAt || ""));
+    if (Number.isFinite(nextMs) && Date.now() >= nextMs) {
+      await runAutomationCycle();
+    }
+  }, 30000);
 }
 
 function makeSyncReq(cookieHeader) {
@@ -1972,119 +2195,58 @@ app.post("/api/db/member-updates/sync-hubspot", async (req, res) => {
   if (!selectedRows.length) {
     return res.status(400).json({ error: "No rows selected." });
   }
-  const normalizedRows = selectedRows
-    .map((r) => ({
-      email: String(r?.email || "")
-        .trim()
-        .toLowerCase(),
-      first_name: String(r?.first_name || "").trim(),
-      last_name: String(r?.last_name || "").trim(),
-      company_name: String(r?.company_name || "").trim(),
-      company_title: String(r?.company_title || "").trim(),
-      city: String(r?.city || "").trim(),
-      state_province_code: String(r?.state_province_code || "").trim(),
-      postal_code: String(r?.postal_code || "").trim(),
-      country_code: String(r?.country_code || "").trim(),
-      sesip_committee_member: r?.sesip_committee_member,
-      se_committee_member: r?.se_committee_member,
-      tes_committee_member: r?.tes_committee_member,
-      automotive_task_force: r?.automotive_task_force,
-      china_task_force: r?.china_task_force,
-      digital_wallets_task_force: r?.digital_wallets_task_force,
-      japan_task_force: r?.japan_task_force,
-      security_task_force: r?.security_task_force,
-      trusted_open_source_silicon_tf: r?.trusted_open_source_silicon_tf
-    }))
-    .filter((r) => r.email);
-  if (!normalizedRows.length) {
+  const rowsWithEmail = selectedRows.filter((r) =>
+    Boolean(String(r?.email || "").trim())
+  );
+  if (!rowsWithEmail.length) {
     return res.status(400).json({ error: "No selected rows have an email." });
   }
   try {
-    const { resolvedByKey, resolution } = await resolveHubspotCustomFields(
-      hubspotToken
-    );
-    const hsProperties = [
-      "firstname",
-      "lastname",
-      "company",
-      "email",
-      "jobtitle",
-      "city",
-      "state",
-      "zip",
-      "country",
-      ...Object.values(resolvedByKey).filter(Boolean)
-    ];
-    const hs = await checkContactsExistInHubspot(
-      hubspotToken,
-      normalizedRows,
-      hsProperties
-    );
-    const existingByEmail = new Map();
-    for (const c of hs.foundContacts || []) {
-      const email = String(c?.properties?.email || "")
-        .trim()
-        .toLowerCase();
-      if (email) existingByEmail.set(email, c.properties || {});
-    }
-    const inputs = normalizedRows.map((row) => {
-      const existing = existingByEmail.get(row.email) || null;
-      const properties = { email: row.email };
-      const standardPairs = [
-        ["firstname", row.first_name],
-        ["lastname", row.last_name],
-        ["company", row.company_name],
-        ["jobtitle", row.company_title],
-        ["city", row.city],
-        ["state", row.state_province_code],
-        ["zip", row.postal_code],
-        ["country", row.country_code]
-      ];
-      for (const [hsKey, hlValue] of standardPairs) {
-        const next = String(hlValue || "").trim();
-        if (!next) continue;
-        if (!existing) {
-          properties[hsKey] = next;
-          continue;
-        }
-        const prev = String(existing[hsKey] || "").trim();
-        if (!prev) properties[hsKey] = next;
-      }
-      const customPairs = [
-        ["sesip_committee_member", row.sesip_committee_member],
-        ["se_committee_member", row.se_committee_member],
-        ["tes_committee_member", row.tes_committee_member],
-        ["automotive_task_force", row.automotive_task_force],
-        ["china_task_force", row.china_task_force],
-        ["digital_wallets_task_force", row.digital_wallets_task_force],
-        ["japan_task_force", row.japan_task_force],
-        ["security_task_force", row.security_task_force],
-        ["trusted_open_source_silicon_tf", row.trusted_open_source_silicon_tf]
-      ];
-      for (const [key, raw] of customPairs) {
-        const hsKey = resolvedByKey[key];
-        if (!hsKey) continue;
-        properties[hsKey] = normalizeHubspotBoolString(raw);
-      }
-      return {
-        id: row.email,
-        idProperty: "email",
-        properties
-      };
-    });
-    const result = await upsertHubspotContactInputs(hubspotToken, inputs);
+    const result = await syncHubspotRowsByEmail(rowsWithEmail, hubspotToken);
     return res.json({
       ok: true,
-      selected: normalizedRows.length,
-      existing: hs.found,
-      createdOrUpdated: result.results,
-      attempted: result.attempted,
-      errors: result.errors,
-      hubspotCustomFieldResolution: resolution
+      ...result
     });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
   }
+});
+
+app.get("/api/automation/status", (req, res) => {
+  res.json({
+    ...automationState
+  });
+});
+
+app.post("/api/automation/config", (req, res) => {
+  const enabled = Boolean(req.body?.enabled);
+  const intervalDays = normalizeAutomationDays(req.body?.intervalDays, 7);
+  const lookbackDays = normalizeAutomationDays(req.body?.lookbackDays, 7);
+  automationState.enabled = enabled;
+  automationState.intervalDays = intervalDays;
+  automationState.lookbackDays = lookbackDays;
+  automationState.lastError = null;
+  if (enabled) {
+    automationState.nextRunAt = new Date(
+      Date.now() + intervalDays * 24 * 60 * 60 * 1000
+    ).toISOString();
+    startAutomationTimer();
+  } else {
+    automationState.nextRunAt = null;
+    stopAutomationTimer();
+  }
+  res.json({ ok: true, ...automationState });
+});
+
+app.post("/api/automation/run-now", async (req, res) => {
+  if (!automationState.enabled) {
+    return res.status(400).json({ error: "Automation is disabled." });
+  }
+  if (automationState.running) {
+    return res.status(409).json({ error: "Automation already running." });
+  }
+  await runAutomationCycle();
+  res.json({ ok: true, ...automationState });
 });
 
 app.get("/health", (req, res) => {

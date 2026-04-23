@@ -60,6 +60,12 @@ const hubspotContactsUpdatedMode = document.getElementById(
 const hubspotContactsUpdatedDays = document.getElementById(
   "hubspotContactsUpdatedDays"
 );
+const automationEnabled = document.getElementById("automationEnabled");
+const automationIntervalDays = document.getElementById("automationIntervalDays");
+const automationLookbackDays = document.getElementById("automationLookbackDays");
+const automationSaveBtn = document.getElementById("automationSaveBtn");
+const automationRunNowBtn = document.getElementById("automationRunNowBtn");
+const automationStatus = document.getElementById("automationStatus");
 const dbSyncBtn = document.getElementById("dbSyncBtn");
 const dbSyncProgress = document.getElementById("dbSyncProgress");
 const dbCommunitiesWrap = document.getElementById("dbCommunitiesWrap");
@@ -87,6 +93,7 @@ let dbUsersOffset = 0;
 const dbUsersLimit = 100;
 let memberUpdatesPreviewRows = [];
 const memberUpdatesSelectedEmails = new Set();
+let automationPollTimer = null;
 /** Column keys that map to server-side ORDER BY (see db.mjs USER_SORT_EXPR). */
 const DB_USER_SORTABLE = new Set([
   "contact_key",
@@ -227,7 +234,7 @@ function renderMemberUpdatesHubspotTable(preview) {
   table.appendChild(tbody);
   memberUpdatesTableWrap.appendChild(table);
   memberUpdatesTableStatus.textContent =
-    `HubSpot sync preview: ${rows.length} user(s) — ${nJoin} with join event(s), ${nRemoval} with removal event(s) (columns “Join event” / “Removal event”).`;
+    `HL/HubSpot sync preview (Higher Logic rows): ${rows.length} user(s) — ${nJoin} with join event(s), ${nRemoval} with removal event(s) (columns “Join event” / “Removal event”).`;
   initSortableTable(table);
 }
 
@@ -348,6 +355,7 @@ function showTab(which) {
   }
   if (isHubspot) {
     loadHubspotOAuthStatus();
+    loadAutomationStatus();
   }
 }
 
@@ -364,6 +372,46 @@ async function loadHubspotOAuthStatus() {
   } catch (e) {
     hubspotOAuthStatus.textContent = "Error: " + e.message;
   }
+}
+
+function formatAutomationStatus(data) {
+  const next = data.nextRunAt ? ` next run ${data.nextRunAt}.` : "";
+  const last = data.lastRunAt ? ` last run ${data.lastRunAt}.` : "";
+  const lastResult = data.lastRunResult
+    ? ` last result: synced ${data.lastRunResult.synced}/${data.lastRunResult.attempted} (HL rows ${data.lastRunResult.hlRows}, errors ${data.lastRunResult.errors}).`
+    : "";
+  const err = data.lastError ? ` error: ${data.lastError}` : "";
+  return `${data.enabled ? "Automation ON" : "Automation OFF"} — every ${data.intervalDays} day(s), lookback ${data.lookbackDays} day(s).${next}${last}${lastResult}${err}`;
+}
+
+async function loadAutomationStatus() {
+  if (
+    !automationStatus ||
+    !automationEnabled ||
+    !automationIntervalDays ||
+    !automationLookbackDays
+  ) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/automation/status");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "failed");
+    automationEnabled.checked = Boolean(data.enabled);
+    automationIntervalDays.value = String(data.intervalDays || 7);
+    automationLookbackDays.value = String(data.lookbackDays || 7);
+    automationStatus.textContent = formatAutomationStatus(data);
+  } catch (e) {
+    automationStatus.textContent = "Automation status error: " + e.message;
+  }
+}
+
+function ensureAutomationPolling() {
+  if (automationPollTimer) clearInterval(automationPollTimer);
+  automationPollTimer = setInterval(() => {
+    if (!panelHubspot || panelHubspot.classList.contains("hidden")) return;
+    loadAutomationStatus();
+  }, 30000);
 }
 
 function renderHubspotContacts(data) {
@@ -438,6 +486,45 @@ if (hubspotLoadContactsBtn) {
       renderHubspotContacts(data);
     } catch (e) {
       hubspotContactsStatus.textContent = "Error: " + e.message;
+    }
+  };
+}
+
+if (automationSaveBtn) {
+  automationSaveBtn.onclick = async () => {
+    if (!automationStatus) return;
+    const payload = {
+      enabled: Boolean(automationEnabled?.checked),
+      intervalDays: parseInt(String(automationIntervalDays?.value || "7"), 10) || 7,
+      lookbackDays: parseInt(String(automationLookbackDays?.value || "7"), 10) || 7
+    };
+    automationStatus.textContent = "Saving automation…";
+    try {
+      const res = await fetch("/api/automation/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "save failed");
+      automationStatus.textContent = formatAutomationStatus(data);
+    } catch (e) {
+      automationStatus.textContent = "Automation save error: " + e.message;
+    }
+  };
+}
+
+if (automationRunNowBtn) {
+  automationRunNowBtn.onclick = async () => {
+    if (!automationStatus) return;
+    automationStatus.textContent = "Running automation now…";
+    try {
+      const res = await fetch("/api/automation/run-now", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "run failed");
+      automationStatus.textContent = formatAutomationStatus(data);
+    } catch (e) {
+      automationStatus.textContent = "Automation run error: " + e.message;
     }
   };
 }
@@ -1100,3 +1187,5 @@ loadMemberTableBtn.onclick = async () => {
 };
 
 refreshAuthStatus();
+loadAutomationStatus();
+ensureAutomationPolling();
