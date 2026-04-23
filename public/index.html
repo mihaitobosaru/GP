@@ -11,9 +11,9 @@
     <h1>Higher Logic Explorer</h1>
     <div class="sub">Browse communities and sync members to a local database.</div>
     <div class="tabs">
-      <button type="button" class="tab active" id="tabBtnExplorer">Explorer</button>
+      <button type="button" class="tab active" id="tabBtnHubspot">HubSpot</button>
+      <button type="button" class="tab" id="tabBtnExplorer">Explorer</button>
       <button type="button" class="tab" id="tabBtnDatabase">Database</button>
-      <button type="button" class="tab" id="tabBtnHubspot">HubSpot</button>
     </div>
 
     <div class="status">
@@ -21,7 +21,7 @@
       <button id="loginBtn" style="margin-left:10px;">Login with Higher Logic</button>
     </div>
 
-    <div id="panelExplorer" class="tab-panel">
+    <div id="panelExplorer" class="tab-panel hidden">
       <div class="sub" style="margin-top:12px;">Load communities → pick one → load members → pick one → inspect full member details</div>
 
       <div class="grid">
@@ -73,18 +73,6 @@
         </label>
         <button type="button" id="dbSyncBtn">Re-sync now</button>
         <div id="dbSyncProgress" class="progressLine"></div>
-        <p class="muted" style="margin-top:16px;margin-bottom:8px;">Higher Logic <code>GetCommunityMemberUpdates</code> (v2): loads join/removal events for a window, then updates <strong>existing</strong> users whose <code>EmailAddress</code> matches <code>users.email</code> (name, company, <code>updated_on</code>). Community links are added/removed when a community key can be resolved (integration ID or name). If <code>HUBSPOT_ACCESS_TOKEN</code> is set (Private App), the same contacts are checked in HubSpot by email and each preview row includes an <strong>Exists in HubSpot</strong> flag.</p>
-        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
-          Past days <input type="number" id="memberUpdatesDays" min="1" max="3660" value="60" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
-        </label>
-        <button type="button" id="dbMemberUpdatesBtn">Apply member updates</button>
-        <button type="button" id="memberUpdatesSyncSelectedBtn">Sync selected to HubSpot</button>
-        <div id="memberUpdatesProgress" class="progressLine"></div>
-        <div id="memberUpdatesSyncStatus" class="status"></div>
-        <div id="memberUpdatesTableStatus" class="status"></div>
-        <div id="memberUpdatesTableWrap" class="tableWrap"></div>
-        <div id="memberUpdatesHubspotFoundStatus" class="status"></div>
-        <div id="memberUpdatesHubspotFoundWrap" class="tableWrap"></div>
       </div>
 
       <div class="card db-collapsible" style="margin-top:16px;">
@@ -117,10 +105,25 @@
       </div>
     </div>
 
-    <div id="panelHubspot" class="tab-panel hidden">
+    <div id="panelHubspot" class="tab-panel">
       <p class="muted" style="margin-top:0;"><strong>HubSpot</strong> OAuth: set <code>HUBSPOT_OAUTH_CLIENT_ID</code>, <code>HUBSPOT_OAUTH_CLIENT_SECRET</code>, and register <code>HUBSPOT_OAUTH_REDIRECT_URI</code> (must match exactly). Separate from <code>HUBSPOT_ACCESS_TOKEN</code> private-app sync.</p>
       <p class="muted" style="margin-top:12px;"><strong>MCP auth app</strong> (OAuth 2.1, install URL on <code>mcp.hubspot.com</code>): set <code>HUBSPOT_OAUTH_FLOW=mcp</code> — this app uses PKCE and the MCP authorize/token endpoints (<a href="https://mcp.hubspot.com/.well-known/oauth-authorization-server" target="_blank" rel="noopener">metadata</a>). <strong>Classic</strong> public app (<code>app.hubspot.com</code>): leave unset or <code>HUBSPOT_OAUTH_FLOW=classic</code> and align <code>HUBSPOT_OAUTH_SCOPE</code> with the app’s Scopes tab if you see a scope mismatch.</p>
       <div class="card">
+        <h2>Member updates + HubSpot compare/sync</h2>
+        <p class="muted" style="margin-top:0;margin-bottom:8px;">Higher Logic <code>GetCommunityMemberUpdates</code> (v2): loads join/removal events for a window, then updates <strong>existing</strong> users whose <code>EmailAddress</code> matches <code>users.email</code> (name, company, <code>updated_on</code>). Community links are added/removed when a community key can be resolved (integration ID or name). If <code>HUBSPOT_ACCESS_TOKEN</code> is set (Private App), the same contacts are checked in HubSpot by email and each preview row includes an <strong>Exists in HubSpot</strong> flag.</p>
+        <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
+          Past days <input type="number" id="memberUpdatesDays" min="1" max="3660" value="60" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
+        </label>
+        <button type="button" id="dbMemberUpdatesBtn">Apply member updates</button>
+        <button type="button" id="memberUpdatesSyncSelectedBtn">Sync selected to HubSpot</button>
+        <div id="memberUpdatesProgress" class="progressLine"></div>
+        <div id="memberUpdatesSyncStatus" class="status"></div>
+        <div id="memberUpdatesTableStatus" class="status"></div>
+        <div id="memberUpdatesTableWrap" class="tableWrap"></div>
+        <div id="memberUpdatesHubspotFoundStatus" class="status"></div>
+        <div id="memberUpdatesHubspotFoundWrap" class="tableWrap"></div>
+      </div>
+      <div class="card" style="margin-top:16px;">
         <h2>Connection</h2>
         <div id="hubspotOAuthStatus" class="status"></div>
         <button type="button" id="hubspotConnectBtn">Connect HubSpot</button>
