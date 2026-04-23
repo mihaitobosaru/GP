@@ -1292,24 +1292,14 @@ app.get("/api/hubspot/contacts", async (req, res) => {
         "HubSpot is not connected. Either connect OAuth or set HUBSPOT_ACCESS_TOKEN."
     });
   }
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
-  const props = "email,firstname,lastname,company,hs_object_id";
-  const listUrl = new URL("https://api.hubapi.com/crm/v3/objects/contacts");
-  listUrl.searchParams.set("limit", String(limit));
-  listUrl.searchParams.set("properties", props);
-  async function fetchList(token) {
-    return fetch(listUrl.toString(), {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-  }
-  let r = await fetchList(access);
-  if (
-    r.status === 401 &&
-    refresh &&
-    HUBSPOT_OAUTH_CLIENT_ID &&
-    HUBSPOT_OAUTH_CLIENT_SECRET
-  ) {
-    try {
+  async function withHubspotAccess(doRequest) {
+    let r = await doRequest(access);
+    if (
+      r.status === 401 &&
+      refresh &&
+      HUBSPOT_OAUTH_CLIENT_ID &&
+      HUBSPOT_OAUTH_CLIENT_SECRET
+    ) {
       const td = await refreshHubspotAccessToken({
         clientId: HUBSPOT_OAUTH_CLIENT_ID,
         clientSecret: HUBSPOT_OAUTH_CLIENT_SECRET,
@@ -1318,26 +1308,106 @@ app.get("/api/hubspot/contacts", async (req, res) => {
       });
       setHubspotOAuthCookies(res, req, td);
       access = String(td.access_token || "").trim();
-      r = await fetchList(access);
-    } catch (e) {
-      return res.status(401).json({ error: String(e.message || e) });
+      r = await doRequest(access);
     }
+    return r;
   }
-  const text = await r.text();
-  let data;
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
+    const updatedDaysRaw = String(req.query.updatedDays || "").trim();
+    const updatedDays = updatedDaysRaw
+      ? Math.min(3650, Math.max(1, parseInt(updatedDaysRaw, 10) || 30))
+      : 0;
+    if (updatedDays > 0) {
+      const sinceMs = Date.now() - updatedDays * 24 * 60 * 60 * 1000;
+      const results = [];
+      let after = "";
+      do {
+        const body = {
+          limit: 100,
+          properties: [
+            "email",
+            "firstname",
+            "lastname",
+            "company",
+            "lastmodifieddate"
+          ],
+          filterGroups: [
+            {
+              filters: [
+                {
+                  propertyName: "lastmodifieddate",
+                  operator: "GTE",
+                  value: String(sinceMs)
+                }
+              ]
+            }
+          ],
+          sorts: [{ propertyName: "lastmodifieddate", direction: "DESCENDING" }]
+        };
+        if (after) body.after = after;
+        const r = await withHubspotAccess((token) =>
+          fetch("https://api.hubapi.com/crm/v3/objects/contacts/search", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(body)
+          })
+        );
+        const text = await r.text();
+        let data;
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          data = { raw: text };
+        }
+        if (!r.ok) {
+          return res.status(r.status).json({
+            error: "HubSpot CRM API error",
+            status: r.status,
+            details: data
+          });
+        }
+        const pageResults = Array.isArray(data.results) ? data.results : [];
+        results.push(...pageResults);
+        after = String(data?.paging?.next?.after || "").trim();
+      } while (after);
+      return res.json({
+        mode: "updatedDays",
+        updatedDays,
+        total: results.length,
+        results
+      });
+    }
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "10", 10)));
+    const props = "email,firstname,lastname,company,lastmodifieddate,hs_object_id";
+    const listUrl = new URL("https://api.hubapi.com/crm/v3/objects/contacts");
+    listUrl.searchParams.set("limit", String(limit));
+    listUrl.searchParams.set("properties", props);
+    const r = await withHubspotAccess((token) =>
+      fetch(listUrl.toString(), {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    );
+    const text = await r.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    if (!r.ok) {
+      return res.status(r.status).json({
+        error: "HubSpot CRM API error",
+        status: r.status,
+        details: data
+      });
+    }
+    return res.json(data);
+  } catch (e) {
+    return res.status(401).json({ error: String(e.message || e) });
   }
-  if (!r.ok) {
-    return res.status(r.status).json({
-      error: "HubSpot CRM API error",
-      status: r.status,
-      details: data
-    });
-  }
-  res.json(data);
 });
 
 /**

@@ -56,6 +56,12 @@ const hubspotDisconnectBtn = document.getElementById("hubspotDisconnectBtn");
 const hubspotLoadContactsBtn = document.getElementById("hubspotLoadContactsBtn");
 const hubspotContactsStatus = document.getElementById("hubspotContactsStatus");
 const hubspotContactsWrap = document.getElementById("hubspotContactsWrap");
+const hubspotContactsUpdatedMode = document.getElementById(
+  "hubspotContactsUpdatedMode"
+);
+const hubspotContactsUpdatedDays = document.getElementById(
+  "hubspotContactsUpdatedDays"
+);
 const dbSyncBtn = document.getElementById("dbSyncBtn");
 const dbSyncProgress = document.getElementById("dbSyncProgress");
 const dbCommunitiesWrap = document.getElementById("dbCommunitiesWrap");
@@ -395,7 +401,7 @@ function renderHubspotContacts(data) {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
-  ["ID", "Email", "First name", "Last name", "Company"].forEach((h) => {
+  ["ID", "Email", "First name", "Last name", "Company", "Last modified"].forEach((h) => {
     const th = document.createElement("th");
     th.textContent = h;
     hr.appendChild(th);
@@ -411,7 +417,8 @@ function renderHubspotContacts(data) {
       p.email || "",
       p.firstname || "",
       p.lastname || "",
-      p.company || ""
+      p.company || "",
+      p.lastmodifieddate || ""
     ].forEach((cell) => {
       const td = document.createElement("td");
       td.textContent = cell == null ? "" : String(cell);
@@ -453,11 +460,24 @@ if (hubspotLoadContactsBtn) {
     hubspotContactsStatus.textContent = "Loading…";
     hubspotContactsWrap.innerHTML = "";
     try {
-      const res = await fetch("/api/hubspot/contacts?limit=10");
+      const updatedMode = Boolean(hubspotContactsUpdatedMode?.checked);
+      const updatedDays = Math.min(
+        3650,
+        Math.max(1, parseInt(String(hubspotContactsUpdatedDays?.value || "30"), 10) || 30)
+      );
+      const params = new URLSearchParams();
+      if (updatedMode) {
+        params.set("updatedDays", String(updatedDays));
+      } else {
+        params.set("limit", "10");
+      }
+      const res = await fetch("/api/hubspot/contacts?" + params.toString());
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.details?.message || "failed");
-      hubspotContactsStatus.textContent =
-        "OK — " + (Array.isArray(data.results) ? data.results.length : 0) + " contact(s).";
+      const count = Array.isArray(data.results) ? data.results.length : 0;
+      hubspotContactsStatus.textContent = updatedMode
+        ? `OK — ${count} contact(s) updated in last ${updatedDays} day(s).`
+        : "OK — " + count + " contact(s).";
       renderHubspotContacts(data);
     } catch (e) {
       hubspotContactsStatus.textContent = "Error: " + e.message;
