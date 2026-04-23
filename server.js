@@ -81,6 +81,10 @@ const OAUTH_REDIRECT_URI = (
   process.env.HIGHERLOGIC_OAUTH_REDIRECT_URI ||
   `http://localhost:${port}/auth/callback`
 ).trim();
+const APP_LOGIN_USERNAME = String(process.env.APP_LOGIN_USERNAME || "").trim();
+const APP_LOGIN_PASSWORD = String(process.env.APP_LOGIN_PASSWORD || "").trim();
+const APP_AUTH_COOKIE_NAME = "app_auth";
+const APP_AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 const API_USERNAME = (process.env.HIGHERLOGIC_API_USERNAME || "").trim();
 const API_PASSWORD = (process.env.HIGHERLOGIC_API_PASSWORD || "").trim();
 const HIGHERLOGIC_TENANT_KEY = (process.env.HIGHERLOGIC_TENANT_KEY || "").trim();
@@ -103,7 +107,14 @@ if (!BEARER_TOKEN && !OAUTH_CLIENT_ID) {
   );
 }
 
+if ((APP_LOGIN_USERNAME && !APP_LOGIN_PASSWORD) || (!APP_LOGIN_USERNAME && APP_LOGIN_PASSWORD)) {
+  console.warn(
+    "APP login auth is partially configured. Set both APP_LOGIN_USERNAME and APP_LOGIN_PASSWORD (or neither)."
+  );
+}
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const db = openDatabase();
 
@@ -221,6 +232,74 @@ function getRequestedHubspotCustomFields() {
       label: "Trusted Open Source Silicon Task Force"
     }
   ];
+}
+
+function isAppLoginEnabled() {
+  return Boolean(APP_LOGIN_USERNAME && APP_LOGIN_PASSWORD);
+}
+
+function getAppAuthCookieValue() {
+  if (!isAppLoginEnabled()) return "";
+  return crypto
+    .createHash("sha256")
+    .update(`${APP_LOGIN_USERNAME}:${APP_LOGIN_PASSWORD}`)
+    .digest("hex");
+}
+
+function isAppLoginAuthenticated(req) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  const cookieValue = String(cookies[APP_AUTH_COOKIE_NAME] || "").trim();
+  const expected = getAppAuthCookieValue();
+  return Boolean(expected && cookieValue && cookieValue === expected);
+}
+
+function setAppLoginCookie(res, req) {
+  const secure = cookieSecure(req);
+  const value = getAppAuthCookieValue();
+  res.append(
+    "Set-Cookie",
+    `${APP_AUTH_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${APP_AUTH_COOKIE_MAX_AGE}${secure ? "; Secure" : ""}`
+  );
+}
+
+function clearAppLoginCookie(res, req) {
+  const secure = cookieSecure(req);
+  res.append(
+    "Set-Cookie",
+    `${APP_AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`
+  );
+}
+
+function renderAppLoginHtml(error = "") {
+  const safeError = String(error || "").trim();
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>App Login</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f6f7fb; color:#111827; margin:0; padding:32px; }
+    .card { max-width:420px; margin:60px auto; background:#fff; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.08); padding:20px; }
+    h1 { margin:0 0 12px; font-size:22px; }
+    label { display:block; margin-top:10px; font-size:13px; color:#374151; }
+    input { width:100%; box-sizing:border-box; margin-top:6px; padding:10px; border:1px solid #d1d5db; border-radius:8px; }
+    button { margin-top:14px; width:100%; background:#111827; color:#fff; border:0; border-radius:8px; padding:10px 12px; cursor:pointer; }
+    .error { margin-top:10px; color:#b91c1c; font-size:13px; min-height:18px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Sign in</h1>
+    <form method="post" action="/app/login">
+      <label>Username<input name="username" autocomplete="username" required /></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required /></label>
+      <button type="submit">Login</button>
+      <div class="error">${safeError}</div>
+    </form>
+  </div>
+</body>
+</html>`;
 }
 
 async function resolveHubspotCustomFields(accessToken) {
@@ -846,6 +925,46 @@ function toTableRow(detail) {
     MembershipStatus: mapMembershipStatus(detail?.ContactStatusCode)
   };
 }
+
+app.get("/app/login", (req, res) => {
+  if (!isAppLoginEnabled()) {
+    return res.redirect("/");
+  }
+  if (isAppLoginAuthenticated(req)) {
+    return res.redirect("/");
+  }
+  res.status(200).send(renderAppLoginHtml());
+});
+
+app.post("/app/login", (req, res) => {
+  if (!isAppLoginEnabled()) {
+    return res.redirect("/");
+  }
+  const username = String(req.body?.username || "").trim();
+  const password = String(req.body?.password || "").trim();
+  if (username === APP_LOGIN_USERNAME && password === APP_LOGIN_PASSWORD) {
+    setAppLoginCookie(res, req);
+    return res.redirect("/");
+  }
+  clearAppLoginCookie(res, req);
+  return res.status(401).send(renderAppLoginHtml("Invalid username or password."));
+});
+
+app.post("/app/logout", (req, res) => {
+  clearAppLoginCookie(res, req);
+  res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  if (!isAppLoginEnabled()) return next();
+  const p = req.path || "";
+  if (p === "/health" || p === "/app/login") return next();
+  if (isAppLoginAuthenticated(req)) return next();
+  if (p.startsWith("/api/")) {
+    return res.status(401).json({ error: "App login required." });
+  }
+  return res.redirect("/app/login");
+});
 
 app.get("/auth/login", (req, res) => {
   if (!OAUTH_CLIENT_ID) {
