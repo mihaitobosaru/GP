@@ -51,8 +51,6 @@ const panelExplorer = document.getElementById("panelExplorer");
 const panelDatabase = document.getElementById("panelDatabase");
 const panelHubspot = document.getElementById("panelHubspot");
 const hubspotOAuthStatus = document.getElementById("hubspotOAuthStatus");
-const hubspotConnectBtn = document.getElementById("hubspotConnectBtn");
-const hubspotDisconnectBtn = document.getElementById("hubspotDisconnectBtn");
 const hubspotLoadContactsBtn = document.getElementById("hubspotLoadContactsBtn");
 const hubspotContactsStatus = document.getElementById("hubspotContactsStatus");
 const hubspotContactsWrap = document.getElementById("hubspotContactsWrap");
@@ -357,34 +355,12 @@ async function loadHubspotOAuthStatus() {
   if (!hubspotOAuthStatus) return;
   hubspotOAuthStatus.textContent = "Checking…";
   try {
-    const [stRes, cfgRes] = await Promise.all([
-      fetch("/api/hubspot/oauth/status"),
-      fetch("/api/hubspot/oauth/config")
-    ]);
+    const stRes = await fetch("/api/hubspot/oauth/status");
     const d = await stRes.json();
-    let cfg = null;
-    if (cfgRes.ok) {
-      try {
-        cfg = await cfgRes.json();
-      } catch {
-        cfg = null;
-      }
-    }
     if (!stRes.ok) throw new Error(d.error || "failed");
-    if (!d.configured) {
-      hubspotOAuthStatus.textContent =
-        "OAuth not configured on server (set HUBSPOT_OAUTH_CLIENT_ID and HUBSPOT_OAUTH_CLIENT_SECRET).";
-      return;
-    }
-    const scopeHint =
-      cfg && cfg.flow === "mcp"
-        ? " OAuth 2.1 (MCP): PKCE; authorize URL has no scope param."
-        : cfg && cfg.scope
-          ? ` Requested scopes: ${cfg.scope}.`
-          : "";
     hubspotOAuthStatus.textContent = d.connected
-      ? `Connected to HubSpot OAuth (access token in cookie).${scopeHint}`
-      : `Not connected — click Connect HubSpot.${scopeHint}`;
+      ? `Connected (${d.connectionType || "token"})`
+      : "Not connected";
   } catch (e) {
     hubspotOAuthStatus.textContent = "Error: " + e.message;
   }
@@ -435,25 +411,6 @@ tabBtnExplorer.onclick = () => showTab("explorer");
 tabBtnDatabase.onclick = () => showTab("database");
 if (tabBtnHubspot) tabBtnHubspot.onclick = () => showTab("hubspot");
 
-if (hubspotConnectBtn) {
-  hubspotConnectBtn.onclick = () => {
-    window.location.href = "/api/hubspot/oauth/start";
-  };
-}
-if (hubspotDisconnectBtn) {
-  hubspotDisconnectBtn.onclick = async () => {
-    try {
-      const res = await fetch("/api/hubspot/oauth/disconnect", { method: "POST" });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.error || "failed");
-      hubspotContactsWrap.innerHTML = "";
-      if (hubspotContactsStatus) hubspotContactsStatus.textContent = "";
-      await loadHubspotOAuthStatus();
-    } catch (e) {
-      if (hubspotOAuthStatus) hubspotOAuthStatus.textContent = "Error: " + e.message;
-    }
-  };
-}
 if (hubspotLoadContactsBtn) {
   hubspotLoadContactsBtn.onclick = async () => {
     if (!hubspotContactsStatus || !hubspotContactsWrap) return;
@@ -911,14 +868,19 @@ async function refreshAuthStatus() {
 
     if (data.authenticated) {
       authStatusEl.textContent = "Authenticated (" + data.source + ")";
+      if (loginBtn) loginBtn.style.display = "none";
     } else if (data.oauthConfigured) {
       authStatusEl.textContent = "Not authenticated";
+      if (loginBtn) loginBtn.style.display = "";
     } else {
       authStatusEl.textContent = "No token configured";
+      if (loginBtn) loginBtn.style.display = "";
     }
   } catch (err) {
     authStatusEl.textContent = "Error: " + err.message;
+    if (loginBtn) loginBtn.style.display = "";
   }
+  await loadHubspotOAuthStatus();
 }
 
 loginBtn.onclick = () => {

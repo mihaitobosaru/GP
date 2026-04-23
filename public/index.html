@@ -19,6 +19,7 @@
     <div class="status">
       Auth status: <strong id="authStatus">Checking...</strong>
       <button id="loginBtn" style="margin-left:10px;">Login with Higher Logic</button>
+      <span style="margin-left:10px;">HubSpot: <strong id="hubspotOAuthStatus">Checking...</strong></span>
     </div>
 
     <div id="panelExplorer" class="tab-panel hidden">
@@ -121,10 +122,6 @@
         <div id="memberUpdatesHubspotFoundWrap" class="tableWrap"></div>
       </div>
       <div class="card" style="margin-top:16px;">
-        <h2>Connection</h2>
-        <div id="hubspotOAuthStatus" class="status"></div>
-      </div>
-      <div class="card" style="margin-top:16px;">
         <h2>Test: CRM contacts</h2>
         <p class="muted" style="margin-top:0;">Uses CRM Contacts API; token must allow reading contacts (classic OAuth: set <code>HUBSPOT_OAUTH_SCOPE</code>; MCP flow grants scopes at install).</p>
         <label class="muted" style="display:inline-flex;align-items:center;gap:8px;margin-right:10px;">
@@ -133,7 +130,7 @@
           <input type="number" id="hubspotContactsUpdatedDays" min="1" max="3650" value="30" style="width:72px;padding:6px;border-radius:8px;border:1px solid #d1d5db;" />
           days
         </label>
-        <button type="button" id="hubspotLoadContactsBtn">Load 10 contacts</button>
+        <button type="button" id="hubspotLoadContactsBtn">Load</button>
         <div id="hubspotContactsStatus" class="status"></div>
         <div id="hubspotContactsWrap" class="tableWrap"></div>
       </div>
