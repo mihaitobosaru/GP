@@ -852,6 +852,14 @@ function getActiveBearerToken(req) {
   return cookies.hl_api_access_token || apiAccessToken || BEARER_TOKEN;
 }
 
+function primeApiAccessTokenFromRequest(req) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  const cookieToken = String(cookies.hl_api_access_token || "").trim();
+  if (cookieToken) {
+    apiAccessToken = cookieToken;
+  }
+}
+
 function extractToken(data) {
   if (!data || typeof data !== "object") return "";
   return (
@@ -1856,6 +1864,7 @@ app.post("/api/db/sync", (req, res) => {
   const cookieHeader = req.headers.cookie || "";
   let refreshAll = false;
   try {
+    primeApiAccessTokenFromRequest(req);
     refreshAll = Boolean(req.body?.refreshAllDetails);
     getActiveBearerToken(makeSyncReq(cookieHeader));
   } catch {
@@ -1871,6 +1880,7 @@ app.post("/api/db/sync", (req, res) => {
 app.post("/api/db/member-updates", async (req, res) => {
   const cookieHeader = req.headers.cookie || "";
   try {
+    primeApiAccessTokenFromRequest(req);
     getActiveBearerToken(makeSyncReq(cookieHeader));
   } catch {
     return res.status(401).json({ error: "Not authenticated" });
@@ -2219,6 +2229,7 @@ app.get("/api/automation/status", (req, res) => {
 });
 
 app.post("/api/automation/config", (req, res) => {
+  primeApiAccessTokenFromRequest(req);
   const enabled = Boolean(req.body?.enabled);
   const intervalDays = normalizeAutomationDays(req.body?.intervalDays, 7);
   const lookbackDays = normalizeAutomationDays(req.body?.lookbackDays, 7);
@@ -2239,6 +2250,7 @@ app.post("/api/automation/config", (req, res) => {
 });
 
 app.post("/api/automation/run-now", async (req, res) => {
+  primeApiAccessTokenFromRequest(req);
   if (!automationState.enabled) {
     return res.status(400).json({ error: "Automation is disabled." });
   }
