@@ -955,17 +955,30 @@ async function refreshAuthStatus() {
 
     if (data.authenticated) {
       authStatusEl.textContent = "Authenticated (" + data.source + ")";
-      if (loginBtn) loginBtn.style.display = "none";
+      if (loginBtn) {
+        // Tokens can expire while still present in cookie/env, so keep a manual re-login action visible.
+        loginBtn.style.display = data.oauthConfigured ? "" : "none";
+        loginBtn.textContent = "Re-login with Higher Logic";
+      }
     } else if (data.oauthConfigured) {
       authStatusEl.textContent = "Not authenticated";
-      if (loginBtn) loginBtn.style.display = "";
+      if (loginBtn) {
+        loginBtn.style.display = "";
+        loginBtn.textContent = "Login with Higher Logic";
+      }
     } else {
       authStatusEl.textContent = "No token configured";
-      if (loginBtn) loginBtn.style.display = "";
+      if (loginBtn) {
+        loginBtn.style.display = "";
+        loginBtn.textContent = "Login with Higher Logic";
+      }
     }
   } catch (err) {
     authStatusEl.textContent = "Error: " + err.message;
-    if (loginBtn) loginBtn.style.display = "";
+    if (loginBtn) {
+      loginBtn.style.display = "";
+      loginBtn.textContent = "Login with Higher Logic";
+    }
   }
   await loadHubspotOAuthStatus();
 }
