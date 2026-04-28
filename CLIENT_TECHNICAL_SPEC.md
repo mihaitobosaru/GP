@@ -1,230 +1,166 @@
-# Higher Logic + HubSpot Sync Tool
+# Higher Logic -> HubSpot Sync Operations Guide
 
-## Purpose
+## Scope
 
-This application lets a client team:
+This document is focused on the **main HubSpot tab workflow** only:
 
-- Explore communities and members from Higher Logic.
-- Build and maintain a local SQLite cache of community/member data.
-- Detect recent Higher Logic membership changes (joins/removals).
-- Compare those changes with HubSpot contacts.
-- Sync selected records to HubSpot (manual or automated).
+- **Manual sync**: user selects which records to sync.
+- **Auto-sync**: scheduled sync runs.
 
-The UI is browser-based and the server is a Node.js app.
+Explorer/Database tabs are supporting utilities and are intentionally minimized here.
 
-## Who Should Use This
+## What The Main Tab Does
 
-- Operations users maintaining community/member alignment.
-- CRM admins validating HubSpot contact status fields.
-- Technical admins running scheduled sync automation.
+The HubSpot tab runs this pipeline:
 
-## System Architecture (Client View)
+1. Pull recent member updates from Higher Logic (joins/removals) for a selected day window.
+2. Match those updates to local users (by email/contact key relationship).
+3. Build a preview table with sync flags and HubSpot existence.
+4. Sync only selected rows to HubSpot (manual mode), or sync all impacted rows in a scheduled run (auto mode).
 
-- **Frontend:** static web UI (`/public`) with three tabs: HubSpot, Explorer, Database.
-- **Backend:** Express server (`server.js`) exposing internal API endpoints.
-- **Local data store:** SQLite (`better-sqlite3`), default file `data/hl-sync.db`.
-- **External systems:** Higher Logic API and HubSpot CRM API/OAuth.
+## Required Credentials For Sync
 
-## Prerequisites
+### Higher Logic (required)
 
-- Node.js 18+ recommended (Node 20+ preferred).
-- Valid Higher Logic API credentials.
-- Valid Higher Logic IAM key.
-- Optional HubSpot OAuth app or HubSpot private token.
+- `HIGHERLOGIC_IAM_KEY`
+- OAuth route (recommended):
+  - `HIGHERLOGIC_OAUTH_CLIENT_ID`
+  - `HIGHERLOGIC_OAUTH_CLIENT_SECRET` (if required by tenant)
+  - `HIGHERLOGIC_OAUTH_REDIRECT_URI`
+  - `HIGHERLOGIC_API_USERNAME`
+  - `HIGHERLOGIC_API_PASSWORD` (**admin/API account required**)
+- OR static token route:
+  - `HIGHERLOGIC_BEARER_TOKEN`
 
-## Installation And Start
+### HubSpot (required for syncing contacts)
 
-1. Install dependencies:
-   - `npm install`
-2. Configure environment variables (see section below).
-3. Start the server:
-   - `npm start`
-4. Open:
-   - `http://localhost:3000`
+- OAuth:
+  - `HUBSPOT_OAUTH_CLIENT_ID`
+  - `HUBSPOT_OAUTH_CLIENT_SECRET`
+  - `HUBSPOT_OAUTH_REDIRECT_URI`
+- OR static token:
+  - `HUBSPOT_ACCESS_TOKEN`
 
-## Required Configuration
+## Important Login Behavior (HL)
 
-Set these environment variables before starting the app.
+The app requires admin/API username + password because it exchanges OAuth into an API bearer via Higher Logic `Authentication/Login`.
 
-### Core (Required)
+If HL token expires, sync calls fail with:
 
-- `HIGHERLOGIC_IAM_KEY`: Required for all Higher Logic API calls.
-- One Higher Logic auth option:
-  - `HIGHERLOGIC_BEARER_TOKEN` (simple token mode), or
-  - OAuth config (`HIGHERLOGIC_OAUTH_CLIENT_ID`, plus optional secret and related vars).
+- `Higher Logic error 401: {"Message":"Authentication Token has expired.","ErrorCode":20}`
 
-### Higher Logic OAuth Mode (Recommended for interactive login)
+Recovery:
 
-- `HIGHERLOGIC_OAUTH_CLIENT_ID`
-- `HIGHERLOGIC_OAUTH_CLIENT_SECRET` (tenant-dependent; optional in some setups)
-- `HIGHERLOGIC_OAUTH_REDIRECT_URI` (default: `http://localhost:3000/auth/callback`)
-- `HIGHERLOGIC_OAUTH_SCOPE` (default: `openid profile webapi email role offline_access`)
-- `HIGHERLOGIC_BASE_URL` (default currently points to `https://members.globalplatform.org`)
-- `HIGHERLOGIC_API_USERNAME` and `HIGHERLOGIC_API_PASSWORD` (used in login exchange flow)
-- Optional: `HIGHERLOGIC_TENANT_KEY`
+1. Click **Re-login with Higher Logic**.
+2. Complete login flow.
+3. Retry manual sync or run-now automation.
 
-### App Login Protection (Optional)
+## Manual Sync (Primary Operational Flow)
 
-If set, users must sign in to the app first:
+This is the core day-to-day process.
 
-- `APP_LOGIN_USERNAME`
-- `APP_LOGIN_PASSWORD`
+1. Go to **HubSpot** tab.
+2. Set **Past days** (usually 7-60 depending on your ops cycle).
+3. Click **Check HL member updates**.
+4. Review the generated table:
+   - `member_update_join` and `member_update_removal`
+   - `hubspot_exists`
+   - mapped task-force/committee booleans
+5. Select rows using checkboxes.
+6. Click **Sync selected to HubSpot**.
+7. Confirm status message reports attempted vs synced counts.
 
-### HubSpot Connectivity (Optional but required for HubSpot features)
+### Selection Strategy (Recommended)
 
-Option A: static token:
+- Start with small batches on first run.
+- Prioritize rows with `member_update_join` or `member_update_removal = true`.
+- Re-run preview before syncing if a long time has passed since check.
 
-- `HUBSPOT_ACCESS_TOKEN`
+### What Gets Written To HubSpot
 
-Option B: OAuth:
+- Identity key: **email**.
+- Standard properties: name, company, title, city/state/zip/country.
+- Membership/task-force booleans.
+- Only mapped/available HubSpot properties are written.
 
-- `HUBSPOT_OAUTH_CLIENT_ID`
-- `HUBSPOT_OAUTH_CLIENT_SECRET`
-- `HUBSPOT_OAUTH_REDIRECT_URI` (default: `http://localhost:3000/hubspot/oauth/callback`)
-- `HUBSPOT_OAUTH_FLOW` (`classic` or `mcp`, default `classic`)
-- `HUBSPOT_OAUTH_SCOPE` (classic flow only; default `crm.objects.contacts.read`)
+## Auto-Sync (Scheduled Operations)
 
-Optional field mapping override:
+Auto-sync is for unattended continuous alignment.
 
-- `HUBSPOT_CONTACT_MAP` (JSON mapping of local field -> HubSpot property internal name)
+### Configure
 
-### Sync Performance Tuning (Optional)
+1. In **Automation** section, enable automation.
+2. Set **Run every X days** (`intervalDays`).
+3. Set **Sync changes from past Y days** (`lookbackDays`).
+4. Click **Save automation**.
+5. Optional: click **Run now** to validate immediately.
 
-- `SYNC_CONTACT_CONCURRENCY` (default: `4`)
-- `SYNC_BATCH_DELAY_MS` (default: `75`)
-- `SYNC_GETCONTACT_RETRIES` (default: `4`)
-- `DATABASE_PATH` (override SQLite location; default `data/hl-sync.db`)
+### Runtime Behavior
 
-## First-Time Client Setup Checklist
+Each cycle:
 
-1. Start app and open home page.
-2. Confirm **Auth status** is healthy.
-3. Click **Login with Higher Logic** (if OAuth mode is enabled).
-4. Connect HubSpot (if OAuth mode configured for HubSpot).
-5. Go to **Database** tab and run **Re-sync now** once.
-6. Verify counts are populated (communities, users, links).
-7. Go to **HubSpot** tab and run **Check HL member updates**.
-8. Review preview table, then sync a small sample first.
+1. Pull HL member updates for `lookbackDays`.
+2. Apply updates to local membership/user state.
+3. Build sync rows.
+4. Sync rows to HubSpot by email.
+5. Store run result:
+   - rows considered
+   - attempted/synced
+   - error count
+   - last/next run timestamps
 
-## How To Use (Client Workflow)
+### Tuning Guidance
 
-## 1) Explorer Tab
+- If updates are sparse: interval 1-3 days, lookback 7-14 days.
+- If updates are frequent: interval daily, lookback 2-7 days.
+- Keep lookback larger than interval to avoid missing delayed updates.
 
-Use for direct inspection and validation:
+## Manual Vs Auto-Sync Decision
 
-- Load communities.
-- Select a community.
-- Load members.
-- Select member.
-- Load member details.
-- Optionally load full community member table.
+- Use **manual sync** when human review/approval is required.
+- Use **auto-sync** when mapping is stable and process is trusted.
+- Common model: automation enabled + manual sync for exceptions.
 
-This is best for spot-checking data and troubleshooting individual contacts.
+## Error Handling For Sync Operators
 
-## 2) Database Tab
+### Higher Logic Errors
 
-Use for maintaining local cache and analytics:
+- `Token has expired (ErrorCode 20)`: re-login required.
+- `Missing HIGHERLOGIC_API_USERNAME/HIGHERLOGIC_API_PASSWORD`: OAuth callback cannot resolve HL API bearer.
+- `Not authenticated`: no valid HL bearer in session/env.
 
-- Click **Re-sync now** to run full import:
-  - Fetches all communities.
-  - Fetches all members per community.
-  - Fetches contact details (new users only unless refresh-all enabled).
-- Use **Refresh all contact details** only when you need a full rebuild (slower).
-- Review:
-  - Community list with member counts.
-  - Paginated searchable users table with sortable server-side columns.
+### HubSpot Errors
 
-## 3) HubSpot Tab: Member Updates And Sync
+- `HubSpot is not connected`: connect OAuth or provide `HUBSPOT_ACCESS_TOKEN`.
+- Field/property mismatch: custom property missing or wrong internal name.
 
-Main operational flow:
+### Job State Errors
 
-1. Set **Past days** (window for Higher Logic updates).
-2. Click **Check HL member updates**.
-3. Review generated preview:
-   - Join/removal flags.
-   - Boolean task-force fields.
-   - HubSpot existence status.
-4. Select rows to sync.
-5. Click **Sync selected to HubSpot**.
+- `Sync already running`: wait for current run to finish, then retry.
+- Automation running: avoid parallel manual bulk sync at same moment.
 
-Notes:
+## Minimal Supporting Setup (Outside Main Tab)
 
-- Sync uses email as the HubSpot identity key.
-- Contact properties are updated using mapped standard + custom fields.
-- If HubSpot custom fields are missing/unresolved, those fields are skipped.
+- **Database tab**: run one initial full `Re-sync now` before relying on member update sync.
+- **Explorer tab**: optional spot-check only.
 
-## 4) Automation
+## Daily Operator Runbook
 
-Automation executes periodic update-and-sync runs:
+1. Confirm HL and HubSpot are connected.
+2. On HubSpot tab, run **Check HL member updates**.
+3. Review and **Sync selected to HubSpot**.
+4. Check sync status message for failures.
+5. If auto-sync is enabled, verify last run and next run times.
 
-- Enable automation.
-- Set run interval in days.
-- Set lookback window in days.
-- Save automation config.
-- Optionally trigger **Run now**.
+## Weekly Admin Runbook
 
-Automation run behavior:
+1. Re-validate HL and HubSpot auth.
+2. Validate custom field mapping still resolves correctly.
+3. Review automation settings (`intervalDays`, `lookbackDays`).
+4. Trigger **Run now** after any credential or mapping change.
 
-- Collect Higher Logic membership updates for configured lookback.
-- Apply updates to local SQLite links/users.
-- Sync mapped rows to HubSpot.
-- Record last run result and next run timestamp.
+## Security Notes
 
-## Local Database Model
-
-The database contains:
-
-- `communities`: known communities.
-- `users`: contact details and metadata.
-- `user_communities`: many-to-many membership links.
-- `sync_meta`: global sync status/timestamps/errors.
-
-Operational implication:
-
-- The app can continue to report previously synced data even when upstream APIs are temporarily unavailable.
-
-## Security And Access Notes
-
-- API tokens are handled server-side.
-- Auth/session cookies are `HttpOnly` and `SameSite=Lax`.
-- In production, run behind HTTPS and set secure deployment defaults.
-- Do not expose this tool publicly without network restrictions.
-- Treat environment variables as secrets.
-
-## Expected Errors And What They Mean
-
-- `Missing HIGHERLOGIC_IAM_KEY`: core HL configuration not present.
-- `Not authenticated`: no active HL bearer available in env/session.
-- `Sync already running`: full DB sync already in progress.
-- `HubSpot is not connected`: no HubSpot token or OAuth session.
-- `Set HUBSPOT_ACCESS_TOKEN first`: endpoint requires direct token mode.
-- HubSpot property resolution issues: custom field labels/internal names do not match app expectations.
-
-## Recommended Client Operating Procedure
-
-- Daily/weekly:
-  - Run **Check HL member updates**.
-  - Review and sync selected records.
-- Periodic:
-  - Run **Database Re-sync now** (or schedule during off-hours).
-- Before enabling full automation:
-  - Validate field mapping on a test subset.
-  - Confirm HubSpot custom properties exist and types match expected values.
-
-## Deployment Guidance
-
-- Run this app in an internal environment (VPN/private network).
-- Use process management (for example PM2/systemd/container runtime).
-- Add reverse proxy + TLS.
-- Back up `data/hl-sync.db` if local state is operationally important.
-
-## Support Handoff Data To Provide
-
-When raising an issue, collect:
-
-- Timestamp of action.
-- Active tab and operation attempted.
-- Error message from UI.
-- Server console log snippet.
-- `/api/debug/auth` output (redact secrets before sharing).
-- `/api/sync/status` and `/api/automation/status` output.
+- Keep HL admin/API credentials in environment variables only.
+- Do not share raw `/api/debug/auth` outputs without redaction.
+- Run app behind internal network + HTTPS in production.
