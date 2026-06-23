@@ -1,7 +1,7 @@
 # Higher Logic -> HubSpot Sync Operations Guide
 
 ## Scope
-
+-change
 This document is focused on the **main HubSpot tab workflow** only:
 
 - **Manual sync**: user selects which records to sync.
