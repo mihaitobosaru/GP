@@ -76,6 +76,42 @@
         <div id="dbSyncProgress" class="progressLine"></div>
       </div>
 
+      <div class="card" style="margin-top:16px;">
+        <h2>HubSpot community mappings</h2>
+        <p class="muted" style="margin-top:0;">Map Higher Logic communities to HubSpot boolean contact properties. Enabled mappings appear as columns in the HubSpot sync preview and are written on sync.</p>
+        <div id="hubspotMappingsStatus" class="status"></div>
+        <div id="hubspotMappingsWrap" class="tableWrap"></div>
+        <form id="hubspotMappingForm" style="margin-top:14px;display:grid;gap:10px;max-width:720px;">
+          <input type="hidden" id="hubspotMappingId" value="" />
+          <label class="muted">
+            Community
+            <select id="hubspotMappingCommunity" required style="display:block;width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #d1d5db;"></select>
+          </label>
+          <label class="muted">
+            Label
+            <input id="hubspotMappingLabel" required style="display:block;width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+          </label>
+          <label class="muted">
+            Field key
+            <input id="hubspotMappingFieldKey" required pattern="[a-z][a-z0-9_]{0,63}" title="lowercase letters, digits, underscore" style="display:block;width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+          </label>
+          <label class="muted">
+            HubSpot property
+            <input id="hubspotMappingProperty" list="hubspotPropertyOptions" required placeholder="e.g. hl_my_task_force" style="display:block;width:100%;margin-top:4px;padding:8px;border-radius:8px;border:1px solid #d1d5db;" />
+            <datalist id="hubspotPropertyOptions"></datalist>
+          </label>
+          <label class="muted" style="display:inline-flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="hubspotMappingEnabled" checked />
+            Enabled
+          </label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="submit" id="hubspotMappingSaveBtn">Add mapping</button>
+            <button type="button" id="hubspotMappingCancelBtn" class="hidden">Cancel edit</button>
+            <button type="button" id="hubspotMappingRefreshPropsBtn">Refresh HubSpot properties</button>
+          </div>
+        </form>
+      </div>
+
       <div class="card db-collapsible" style="margin-top:16px;">
         <details class="db-details">
           <summary class="db-details-summary">Communities in database</summary>

@@ -22,6 +22,64 @@ export function openDatabase() {
   return dbInstance;
 }
 
+/** Default HL community → HubSpot bool property mappings (seeded once). */
+export const DEFAULT_HUBSPOT_COMMUNITY_MAPPINGS = [
+  {
+    label: "SESIP Committee Member",
+    field_key: "sesip_committee_member",
+    community_key: "4a9b36f0-efd4-4408-b80b-018b391d061a",
+    hubspot_property: "hl_sesip_committee_member"
+  },
+  {
+    label: "SE Committee Member",
+    field_key: "se_committee_member",
+    community_key: "7ded058e-e51e-473a-8622-30c951d9cea0",
+    hubspot_property: "hl_se_committee_member"
+  },
+  {
+    label: "TES Committee Member",
+    field_key: "tes_committee_member",
+    community_key: "e7f376e3-b2e8-45ce-b23f-018c17c4468c",
+    hubspot_property: "hl_tes_committee_member"
+  },
+  {
+    label: "Automotive Task Force",
+    field_key: "automotive_task_force",
+    community_key: "6ef8848b-91bb-415e-8c19-8692725b704a",
+    hubspot_property: "hl_automotive_task_force"
+  },
+  {
+    label: "China Task Force",
+    field_key: "china_task_force",
+    community_key: "6ebf3127-8433-4ca5-8042-72d6f64dab07",
+    hubspot_property: "hl_china_task_force"
+  },
+  {
+    label: "Japan Task Force",
+    field_key: "japan_task_force",
+    community_key: "432c3f77-9914-4eeb-8777-c9edab890ef4",
+    hubspot_property: "hl_japan_task_force"
+  },
+  {
+    label: "Security Task Force",
+    field_key: "security_task_force",
+    community_key: "8c715805-167b-4158-9749-e9c102f693b0",
+    hubspot_property: "hl_security_task_force"
+  },
+  {
+    label: "Digital Wallets Task Force",
+    field_key: "digital_wallets_task_force",
+    community_key: "838e08a9-b3d0-4662-ac68-bdcb5d0df771",
+    hubspot_property: "hl_digital_wallets_task_force"
+  },
+  {
+    label: "Trusted Open Source Silicon TF",
+    field_key: "trusted_open_source_silicon_tf",
+    community_key: "b41f3bb3-50fd-4644-8158-019933ca5fa2",
+    hubspot_property: "hl_trusted_open_source_silicon_tf"
+  }
+];
+
 function initSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS communities (
@@ -67,7 +125,210 @@ function initSchema(db) {
       last_sync_status TEXT,
       last_sync_error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS hubspot_community_mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      community_key TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      field_key TEXT NOT NULL,
+      hubspot_property TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT,
+      updated_at TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hcm_community_key
+      ON hubspot_community_mappings(community_key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_hcm_field_key
+      ON hubspot_community_mappings(field_key);
   `);
+  seedHubspotCommunityMappings(db);
+}
+
+function seedHubspotCommunityMappings(db) {
+  const count = db
+    .prepare("SELECT COUNT(*) AS n FROM hubspot_community_mappings")
+    .get().n;
+  if (count > 0) return;
+  const now = new Date().toISOString();
+  const ins = db.prepare(
+    `INSERT INTO hubspot_community_mappings
+      (community_key, label, field_key, hubspot_property, enabled, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, ?, ?, ?)`
+  );
+  const run = db.transaction(() => {
+    DEFAULT_HUBSPOT_COMMUNITY_MAPPINGS.forEach((m, i) => {
+      ins.run(
+        m.community_key,
+        m.label,
+        m.field_key,
+        m.hubspot_property,
+        i,
+        now,
+        now
+      );
+    });
+  });
+  run();
+}
+
+export function slugifyFieldKey(label) {
+  return String(label || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
+
+function normalizeMappingInput(input = {}) {
+  const community_key = String(input.community_key || "").trim();
+  const label = String(input.label || "").trim();
+  let field_key = String(input.field_key || "").trim().toLowerCase();
+  if (!field_key && label) field_key = slugifyFieldKey(label);
+  const hubspot_property = String(input.hubspot_property || "").trim();
+  const enabled =
+    input.enabled === false || input.enabled === 0 || input.enabled === "0"
+      ? 0
+      : 1;
+  const sort_order = Number.isFinite(Number(input.sort_order))
+    ? Math.trunc(Number(input.sort_order))
+    : 0;
+  return { community_key, label, field_key, hubspot_property, enabled, sort_order };
+}
+
+function assertValidMappingFields({ community_key, label, field_key, hubspot_property }) {
+  if (!community_key) throw new Error("community_key is required");
+  if (!label) throw new Error("label is required");
+  if (!field_key || !/^[a-z][a-z0-9_]{0,63}$/.test(field_key)) {
+    throw new Error(
+      "field_key must start with a letter and use only lowercase letters, digits, underscore"
+    );
+  }
+  if (!hubspot_property) throw new Error("hubspot_property is required");
+}
+
+export function listHubspotCommunityMappings(db, { enabledOnly = false } = {}) {
+  const sql = enabledOnly
+    ? `SELECT * FROM hubspot_community_mappings WHERE enabled = 1
+       ORDER BY sort_order ASC, id ASC`
+    : `SELECT * FROM hubspot_community_mappings
+       ORDER BY sort_order ASC, id ASC`;
+  return db.prepare(sql).all().map((r) => ({
+    ...r,
+    enabled: r.enabled === 1
+  }));
+}
+
+export function getHubspotCommunityMapping(db, id) {
+  const row = db
+    .prepare("SELECT * FROM hubspot_community_mappings WHERE id = ?")
+    .get(id);
+  if (!row) return null;
+  return { ...row, enabled: row.enabled === 1 };
+}
+
+export function createHubspotCommunityMapping(db, input) {
+  const fields = normalizeMappingInput(input);
+  assertValidMappingFields(fields);
+  const now = new Date().toISOString();
+  if (!Number.isFinite(Number(input?.sort_order))) {
+    const max = db
+      .prepare(
+        "SELECT COALESCE(MAX(sort_order), -1) AS m FROM hubspot_community_mappings"
+      )
+      .get().m;
+    fields.sort_order = max + 1;
+  }
+  try {
+    const info = db
+      .prepare(
+        `INSERT INTO hubspot_community_mappings
+          (community_key, label, field_key, hubspot_property, enabled, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        fields.community_key,
+        fields.label,
+        fields.field_key,
+        fields.hubspot_property,
+        fields.enabled,
+        fields.sort_order,
+        now,
+        now
+      );
+    return getHubspotCommunityMapping(db, info.lastInsertRowid);
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (msg.includes("UNIQUE") || msg.includes("unique")) {
+      throw new Error(
+        "Mapping conflicts with an existing community_key or field_key"
+      );
+    }
+    throw e;
+  }
+}
+
+export function updateHubspotCommunityMapping(db, id, input) {
+  const existing = getHubspotCommunityMapping(db, id);
+  if (!existing) throw new Error("Mapping not found");
+  const merged = normalizeMappingInput({
+    community_key:
+      input.community_key !== undefined
+        ? input.community_key
+        : existing.community_key,
+    label: input.label !== undefined ? input.label : existing.label,
+    field_key:
+      input.field_key !== undefined ? input.field_key : existing.field_key,
+    hubspot_property:
+      input.hubspot_property !== undefined
+        ? input.hubspot_property
+        : existing.hubspot_property,
+    enabled: input.enabled !== undefined ? input.enabled : existing.enabled,
+    sort_order:
+      input.sort_order !== undefined ? input.sort_order : existing.sort_order
+  });
+  assertValidMappingFields(merged);
+  const now = new Date().toISOString();
+  try {
+    db.prepare(
+      `UPDATE hubspot_community_mappings SET
+        community_key = ?,
+        label = ?,
+        field_key = ?,
+        hubspot_property = ?,
+        enabled = ?,
+        sort_order = ?,
+        updated_at = ?
+       WHERE id = ?`
+    ).run(
+      merged.community_key,
+      merged.label,
+      merged.field_key,
+      merged.hubspot_property,
+      merged.enabled,
+      merged.sort_order,
+      now,
+      id
+    );
+  } catch (e) {
+    const msg = String(e?.message || e);
+    if (msg.includes("UNIQUE") || msg.includes("unique")) {
+      throw new Error(
+        "Mapping conflicts with an existing community_key or field_key"
+      );
+    }
+    throw e;
+  }
+  return getHubspotCommunityMapping(db, id);
+}
+
+export function deleteHubspotCommunityMapping(db, id) {
+  const info = db
+    .prepare("DELETE FROM hubspot_community_mappings WHERE id = ?")
+    .run(id);
+  return info.changes > 0;
 }
 
 export function upsertCommunity(db, communityKey, name) {

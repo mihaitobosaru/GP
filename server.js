@@ -17,7 +17,11 @@ import {
   listMembershipsForCommunity,
   applyCommunityMemberUpdates,
   getUsersByContactKeys,
-  getMembershipCommunityKeysByContactKeys
+  getMembershipCommunityKeysByContactKeys,
+  listHubspotCommunityMappings,
+  createHubspotCommunityMapping,
+  updateHubspotCommunityMapping,
+  deleteHubspotCommunityMapping
 } from "./db.mjs";
 import {
   checkContactsExistInHubspot,
@@ -120,61 +124,20 @@ app.use(express.urlencoded({ extended: true }));
 
 const db = openDatabase();
 
-/** Target list column → GlobalPlatform community_key (GUID). Sync after HL community IDs change. */
-const HUBSPOT_BOOL_COMMUNITIES = [
-  {
-    label: "SESIP Committee Member",
-    key: "sesip_committee_member",
-    communityKey: "4a9b36f0-efd4-4408-b80b-018b391d061a"
-  },
-  {
-    label: "SE Committee Member",
-    key: "se_committee_member",
-    communityKey: "7ded058e-e51e-473a-8622-30c951d9cea0"
-  },
-  {
-    label: "TES Committee Member",
-    key: "tes_committee_member",
-    communityKey: "e7f376e3-b2e8-45ce-b23f-018c17c4468c"
-  },
-  {
-    label: "Automotive Task Force",
-    key: "automotive_task_force",
-    communityKey: "6ef8848b-91bb-415e-8c19-8692725b704a"
-  },
-  {
-    label: "China Task Force",
-    key: "china_task_force",
-    communityKey: "6ebf3127-8433-4ca5-8042-72d6f64dab07"
-  },
-  {
-    label: "Japan Task Force",
-    key: "japan_task_force",
-    communityKey: "432c3f77-9914-4eeb-8777-c9edab890ef4"
-  },
-  {
-    label: "Security Task Force",
-    key: "security_task_force",
-    communityKey: "8c715805-167b-4158-9749-e9c102f693b0"
-  },
-  {
-    label: "Digital Wallets Task Force",
-    key: "digital_wallets_task_force",
-    communityKey: "838e08a9-b3d0-4662-ac68-bdcb5d0df771"
-  },
-  {
-    label: "Trusted Open Source Silicon TF",
-    key: "trusted_open_source_silicon_tf",
-    communityKey: "b41f3bb3-50fd-4644-8158-019933ca5fa2"
-  }
-];
+function getEnabledCommunityMappings() {
+  return listHubspotCommunityMappings(db, { enabledOnly: true });
+}
 
 function buildHubspotSyncRows(
   userRows,
   membershipsByContact,
   joinContactKeys = new Set(),
-  removalContactKeys = new Set()
+  removalContactKeys = new Set(),
+  communityMappings = null
 ) {
+  const mappings = Array.isArray(communityMappings)
+    ? communityMappings
+    : getEnabledCommunityMappings();
   const joinSet =
     joinContactKeys instanceof Set ? joinContactKeys : new Set(joinContactKeys);
   const removalSet =
@@ -202,8 +165,8 @@ function buildHubspotSyncRows(
       member_update_join: joinSet.has(u.contact_key),
       member_update_removal: removalSet.has(u.contact_key)
     };
-    for (const c of HUBSPOT_BOOL_COMMUNITIES) {
-      out[c.key] = communitySet.has(c.communityKey);
+    for (const m of mappings) {
+      out[m.field_key] = communitySet.has(m.community_key);
     }
     return out;
   });
@@ -216,24 +179,30 @@ function normalizeHubspotBoolString(v) {
   return ["true", "yes", "1", "y"].includes(s) ? "true" : "false";
 }
 
-function getRequestedHubspotCustomFields() {
-  return [
-    { key: "sesip_committee_member", label: "SESIP Committee Member" },
-    { key: "se_committee_member", label: "SE Committee Member" },
-    { key: "tes_committee_member", label: "TES Committee Member" },
-    { key: "automotive_task_force", label: "Automotive Task Force" },
-    { key: "china_task_force", label: "China Task Force" },
-    {
-      key: "digital_wallets_task_force",
-      label: "Digital Wallets Task Force"
-    },
-    { key: "japan_task_force", label: "Japan Task Force" },
-    { key: "security_task_force", label: "Security Task Force" },
-    {
-      key: "trusted_open_source_silicon_tf",
-      label: "Trusted Open Source Silicon Task Force"
-    }
-  ];
+function buildHubspotPreviewColumns(mappings) {
+  const columns = {
+    first_name: "FirstName",
+    last_name: "LastName",
+    company_name: "CompanyName",
+    email: "Email",
+    company_title: "CompanyTitle",
+    city: "City",
+    state_province_code: "StateProvinceCode",
+    postal_code: "PostalCode",
+    country_code: "CountryCode",
+    create_date: "Create Date",
+    is_member: "Member",
+    region: "Region",
+    membership_level: "Membership Level",
+    membership_status: "Membership Status",
+    member_update_join: "Join event (this run)",
+    member_update_removal: "Removal event (this run)",
+    hubspot_exists: "Exists in HubSpot"
+  };
+  for (const m of mappings) {
+    columns[m.field_key] = m.label || m.field_key;
+  }
+  return columns;
 }
 
 function normalizeAutomationDays(v, fallback) {
@@ -311,8 +280,10 @@ function renderAppLoginHtml(error = "") {
 </html>`;
 }
 
-async function resolveHubspotCustomFields(accessToken) {
-  const requestedCustomFields = getRequestedHubspotCustomFields();
+async function resolveHubspotCustomFields(accessToken, mappings = null) {
+  const requested = Array.isArray(mappings)
+    ? mappings
+    : getEnabledCommunityMappings();
   const configuredMap = getHubspotContactFieldMap();
   const propertyDefs = await listHubspotContactProperties(accessToken);
   const byInternal = new Map(propertyDefs.map((p) => [p.name.toLowerCase(), p]));
@@ -321,23 +292,32 @@ async function resolveHubspotCustomFields(accessToken) {
   );
   const resolvedByKey = {};
   const resolution = [];
-  for (const f of requestedCustomFields) {
-    const configuredInternal = String(configuredMap[f.key] || "").trim();
+  for (const m of requested) {
+    const key = m.field_key;
+    const label = m.label || key;
+    const configuredInternal = String(
+      m.hubspot_property || configuredMap[key] || ""
+    ).trim();
     const configuredDef = configuredInternal
       ? byInternal.get(configuredInternal.toLowerCase())
       : null;
-    const labelDef = byLabel.get(f.label.toLowerCase()) || null;
+    const labelDef = byLabel.get(String(label).toLowerCase()) || null;
     const chosen = configuredDef || labelDef || null;
-    resolvedByKey[f.key] = chosen?.name || "";
+    resolvedByKey[key] = chosen?.name || "";
     resolution.push({
-      key: f.key,
-      label: f.label,
+      key,
+      label,
+      community_key: m.community_key,
       configuredInternalName: configuredInternal || null,
       resolvedInternalName: chosen?.name || null,
-      resolvedBy: configuredDef ? "configured-map" : labelDef ? "label-match" : "unresolved"
+      resolvedBy: configuredDef
+        ? "configured-map"
+        : labelDef
+          ? "label-match"
+          : "unresolved"
     });
   }
-  return { resolvedByKey, resolution };
+  return { resolvedByKey, resolution, mappings: requested };
 }
 
 async function collectHubspotRowsFromHlUpdates(days, cookieHeader = "") {
@@ -385,31 +365,32 @@ async function collectHubspotRowsFromHlUpdates(days, cookieHeader = "") {
 }
 
 async function syncHubspotRowsByEmail(hubspotRows, hubspotToken) {
+  const mappings = getEnabledCommunityMappings();
   const normalizedRows = (Array.isArray(hubspotRows) ? hubspotRows : [])
-    .map((r) => ({
-      email: String(r?.email || "")
-        .trim()
-        .toLowerCase(),
-      first_name: String(r?.first_name || "").trim(),
-      last_name: String(r?.last_name || "").trim(),
-      company_name: String(r?.company_name || "").trim(),
-      company_title: String(r?.company_title || "").trim(),
-      city: String(r?.city || "").trim(),
-      state_province_code: String(r?.state_province_code || "").trim(),
-      postal_code: String(r?.postal_code || "").trim(),
-      country_code: String(r?.country_code || "").trim(),
-      sesip_committee_member: r?.sesip_committee_member,
-      se_committee_member: r?.se_committee_member,
-      tes_committee_member: r?.tes_committee_member,
-      automotive_task_force: r?.automotive_task_force,
-      china_task_force: r?.china_task_force,
-      digital_wallets_task_force: r?.digital_wallets_task_force,
-      japan_task_force: r?.japan_task_force,
-      security_task_force: r?.security_task_force,
-      trusted_open_source_silicon_tf: r?.trusted_open_source_silicon_tf
-    }))
+    .map((r) => {
+      const row = {
+        email: String(r?.email || "")
+          .trim()
+          .toLowerCase(),
+        first_name: String(r?.first_name || "").trim(),
+        last_name: String(r?.last_name || "").trim(),
+        company_name: String(r?.company_name || "").trim(),
+        company_title: String(r?.company_title || "").trim(),
+        city: String(r?.city || "").trim(),
+        state_province_code: String(r?.state_province_code || "").trim(),
+        postal_code: String(r?.postal_code || "").trim(),
+        country_code: String(r?.country_code || "").trim()
+      };
+      for (const m of mappings) {
+        row[m.field_key] = r?.[m.field_key];
+      }
+      return row;
+    })
     .filter((r) => r.email);
-  const { resolvedByKey, resolution } = await resolveHubspotCustomFields(hubspotToken);
+  const { resolvedByKey, resolution } = await resolveHubspotCustomFields(
+    hubspotToken,
+    mappings
+  );
   const hsProperties = [
     "firstname",
     "lastname",
@@ -453,21 +434,10 @@ async function syncHubspotRowsByEmail(hubspotRows, hubspotToken) {
       const prev = String(existing[hsKey] || "").trim();
       if (!prev) properties[hsKey] = next;
     }
-    const customPairs = [
-      ["sesip_committee_member", row.sesip_committee_member],
-      ["se_committee_member", row.se_committee_member],
-      ["tes_committee_member", row.tes_committee_member],
-      ["automotive_task_force", row.automotive_task_force],
-      ["china_task_force", row.china_task_force],
-      ["digital_wallets_task_force", row.digital_wallets_task_force],
-      ["japan_task_force", row.japan_task_force],
-      ["security_task_force", row.security_task_force],
-      ["trusted_open_source_silicon_tf", row.trusted_open_source_silicon_tf]
-    ];
-    for (const [key, raw] of customPairs) {
-      const hsKey = resolvedByKey[key];
+    for (const m of mappings) {
+      const hsKey = resolvedByKey[m.field_key];
       if (!hsKey) continue;
-      properties[hsKey] = normalizeHubspotBoolString(raw);
+      properties[hsKey] = normalizeHubspotBoolString(row[m.field_key]);
     }
     return {
       id: row.email,
@@ -1877,6 +1847,71 @@ app.post("/api/db/sync", (req, res) => {
   res.json({ ok: true, started: true });
 });
 
+app.get("/api/hubspot/community-mappings", (req, res) => {
+  try {
+    const enabledOnly = String(req.query.enabledOnly || "") === "1";
+    res.json(listHubspotCommunityMappings(db, { enabledOnly }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/hubspot/community-mappings", (req, res) => {
+  try {
+    const row = createHubspotCommunityMapping(db, req.body || {});
+    res.status(201).json(row);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put("/api/hubspot/community-mappings/:id", (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+    const row = updateHubspotCommunityMapping(db, id, req.body || {});
+    res.json(row);
+  } catch (e) {
+    const status = String(e.message || "").includes("not found") ? 404 : 400;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+app.delete("/api/hubspot/community-mappings/:id", (req, res) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+    const ok = deleteHubspotCommunityMapping(db, id);
+    if (!ok) return res.status(404).json({ error: "Mapping not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/hubspot/contact-properties", async (req, res) => {
+  try {
+    const token = getHubspotApiToken(req);
+    if (!token) {
+      return res.status(503).json({
+        error:
+          "HubSpot is not connected. Connect OAuth or set HUBSPOT_ACCESS_TOKEN."
+      });
+    }
+    const properties = await listHubspotContactProperties(token);
+    properties.sort((a, b) =>
+      String(a.label || a.name).localeCompare(String(b.label || b.name))
+    );
+    res.json({ properties });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/db/member-updates", async (req, res) => {
   const cookieHeader = req.headers.cookie || "";
   try {
@@ -1926,21 +1961,26 @@ app.post("/api/db/member-updates", async (req, res) => {
       db,
       touchedContactKeys
     );
+    const communityMappings = getEnabledCommunityMappings();
     const hubspotRows = buildHubspotSyncRows(
       rawRows,
       membershipsByContact,
       new Set(joinContactKeys),
-      new Set(removalContactKeys)
+      new Set(removalContactKeys),
+      communityMappings
     );
 
-    const hubspotToken = (process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+    const hubspotToken =
+      getHubspotApiToken(req) ||
+      String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
     let hubspot;
     let hubspotFoundPreview = { columns: {}, rows: [] };
     let hubspotCustomFieldResolution = [];
     if (!hubspotToken) {
       hubspot = {
         skipped: true,
-        reason: "Set HUBSPOT_ACCESS_TOKEN to check contacts in HubSpot."
+        reason:
+          "HubSpot is not connected. Connect OAuth or set HUBSPOT_ACCESS_TOKEN."
       };
     } else if (!hubspotRows.length) {
       hubspot = {
@@ -1952,7 +1992,7 @@ app.post("/api/db/member-updates", async (req, res) => {
         const {
           resolvedByKey,
           resolution: customResolution
-        } = await resolveHubspotCustomFields(hubspotToken);
+        } = await resolveHubspotCustomFields(hubspotToken, communityMappings);
         hubspotCustomFieldResolution = customResolution;
         const hsProperties = [
           "firstname",
@@ -1996,13 +2036,6 @@ app.post("/api/db/member-updates", async (req, res) => {
           String(v == null ? "" : v)
             .trim()
             .toLowerCase();
-        const normalizeDateish = (v) => {
-          const s = String(v == null ? "" : v).trim();
-          if (!s) return "";
-          const t = Date.parse(s);
-          if (!Number.isFinite(t)) return s.toLowerCase();
-          return new Date(t).toISOString().slice(0, 10);
-        };
         const foundRows = (hs.foundContacts || []).map((item) => {
           const p = item?.properties || {};
           const email = String(p.email || "").trim().toLowerCase();
@@ -2018,36 +2051,12 @@ app.post("/api/db/member-updates", async (req, res) => {
             postal_code: p.zip || "",
             country_gp_data: p.country || "",
             contact_create_date: p.createdate || "",
-            contact_last_updated_date: p.lastmodifieddate || "",
-            sesip_committee_member: resolvedByKey.sesip_committee_member
-              ? p[resolvedByKey.sesip_committee_member] || ""
-              : "",
-            se_committee_member: resolvedByKey.se_committee_member
-              ? p[resolvedByKey.se_committee_member] || ""
-              : "",
-            tes_committee_member: resolvedByKey.tes_committee_member
-              ? p[resolvedByKey.tes_committee_member] || ""
-              : "",
-            automotive_task_force: resolvedByKey.automotive_task_force
-              ? p[resolvedByKey.automotive_task_force] || ""
-              : "",
-            china_task_force: resolvedByKey.china_task_force
-              ? p[resolvedByKey.china_task_force] || ""
-              : "",
-            digital_wallets_task_force: resolvedByKey.digital_wallets_task_force
-              ? p[resolvedByKey.digital_wallets_task_force] || ""
-              : "",
-            japan_task_force: resolvedByKey.japan_task_force
-              ? p[resolvedByKey.japan_task_force] || ""
-              : "",
-            security_task_force: resolvedByKey.security_task_force
-              ? p[resolvedByKey.security_task_force] || ""
-              : "",
-            trusted_open_source_silicon_task_force:
-              resolvedByKey.trusted_open_source_silicon_tf
-                ? p[resolvedByKey.trusted_open_source_silicon_tf] || ""
-                : ""
+            contact_last_updated_date: p.lastmodifieddate || ""
           };
+          for (const m of communityMappings) {
+            const hsProp = resolvedByKey[m.field_key];
+            hsValues[m.field_key] = hsProp ? p[hsProp] || "" : "";
+          }
           const comparePairs = [
             ["first_name", "first_name", "text"],
             ["last_name", "last_name", "text"],
@@ -2058,36 +2067,24 @@ app.post("/api/db/member-updates", async (req, res) => {
             ["state_region", "state_province_code", "text"],
             ["postal_code", "postal_code", "text"],
             ["country_gp_data", "country_code", "text"],
-            ["sesip_committee_member", "sesip_committee_member", "boolish"],
-            ["se_committee_member", "se_committee_member", "boolish"],
-            ["tes_committee_member", "tes_committee_member", "boolish"],
-            ["automotive_task_force", "automotive_task_force", "boolish"],
-            ["china_task_force", "china_task_force", "boolish"],
-            ["digital_wallets_task_force", "digital_wallets_task_force", "boolish"],
-            ["japan_task_force", "japan_task_force", "boolish"],
-            ["security_task_force", "security_task_force", "boolish"],
-            [
-              "trusted_open_source_silicon_task_force",
-              "trusted_open_source_silicon_tf",
+            ...communityMappings.map((m) => [
+              m.field_key,
+              m.field_key,
               "boolish"
-            ]
+            ])
           ];
           const mismatchFields = [];
           for (const [hsKey, hlKey, kind] of comparePairs) {
             const hsRaw = hsValues[hsKey];
             const hlRaw = hl[hlKey];
             const hsNorm =
-              kind === "date"
-                ? normalizeDateish(hsRaw)
-                : kind === "boolish"
-                  ? normalizeBoolish(hsRaw)
-                  : normalizeTextish(hsRaw);
+              kind === "boolish"
+                ? normalizeBoolish(hsRaw)
+                : normalizeTextish(hsRaw);
             const hlNorm =
-              kind === "date"
-                ? normalizeDateish(hlRaw)
-                : kind === "boolish"
-                  ? normalizeBoolish(hlRaw)
-                  : normalizeTextish(hlRaw);
+              kind === "boolish"
+                ? normalizeBoolish(hlRaw)
+                : normalizeTextish(hlRaw);
             if (hsNorm !== hlNorm) mismatchFields.push(hsKey);
           }
           return {
@@ -2097,32 +2094,27 @@ app.post("/api/db/member-updates", async (req, res) => {
         });
         foundRows.sort((a, b) => String(a.email).localeCompare(String(b.email)));
         const resolvedNameFor = (key) =>
-          hubspotCustomFieldResolution.find((r) => r.key === key)?.resolvedInternalName ||
-          "unresolved";
+          hubspotCustomFieldResolution.find((r) => r.key === key)
+            ?.resolvedInternalName || "unresolved";
+        const foundColumns = {
+          first_name: "First Name",
+          last_name: "Last Name",
+          company_name: "Company Name",
+          email: "Email",
+          job_title: "Job Title",
+          city: "City",
+          state_region: "State/Region",
+          postal_code: "Postal Code",
+          country_gp_data: "Country (GP Data)",
+          contact_create_date: "Contact Create Date",
+          contact_last_updated_date: "Contact Last Updated Date"
+        };
+        for (const m of communityMappings) {
+          foundColumns[m.field_key] =
+            `${m.label || m.field_key} (${resolvedNameFor(m.field_key)})`;
+        }
         hubspotFoundPreview = {
-          columns: {
-            first_name: "First Name",
-            last_name: "Last Name",
-            company_name: "Company Name",
-            email: "Email",
-            job_title: "Job Title",
-            city: "City",
-            state_region: "State/Region",
-            postal_code: "Postal Code",
-            country_gp_data: "Country (GP Data)",
-            contact_create_date: "Contact Create Date",
-            contact_last_updated_date: "Contact Last Updated Date",
-            sesip_committee_member: `SESIP Committee Member (${resolvedNameFor("sesip_committee_member")})`,
-            se_committee_member: `SE Committee Member (${resolvedNameFor("se_committee_member")})`,
-            tes_committee_member: `TES Committee Member (${resolvedNameFor("tes_committee_member")})`,
-            automotive_task_force: `Automotive Task Force (${resolvedNameFor("automotive_task_force")})`,
-            china_task_force: `China Task Force (${resolvedNameFor("china_task_force")})`,
-            digital_wallets_task_force: `Digital Wallets Task Force (${resolvedNameFor("digital_wallets_task_force")})`,
-            japan_task_force: `Japan Task Force (${resolvedNameFor("japan_task_force")})`,
-            security_task_force: `Security Task Force (${resolvedNameFor("security_task_force")})`,
-            trusted_open_source_silicon_task_force:
-              `Trusted Open Source Silicon Task Force (${resolvedNameFor("trusted_open_source_silicon_tf")})`
-          },
+          columns: foundColumns,
           rows: foundRows
         };
         hubspot = {
@@ -2156,35 +2148,15 @@ app.post("/api/db/member-updates", async (req, res) => {
         removalCount: data.RemovalCount ?? removals.length
       },
       applied,
+      communityMappings: communityMappings.map((m) => ({
+        id: m.id,
+        field_key: m.field_key,
+        label: m.label,
+        community_key: m.community_key,
+        hubspot_property: m.hubspot_property
+      })),
       hubspotPreview: {
-        columns: {
-          first_name: "FirstName",
-          last_name: "LastName",
-          company_name: "CompanyName",
-          email: "Email",
-          company_title: "CompanyTitle",
-          city: "City",
-          state_province_code: "StateProvinceCode",
-          postal_code: "PostalCode",
-          country_code: "CountryCode",
-          create_date: "Create Date",
-          is_member: "Member",
-          region: "Region",
-          membership_level: "Membership Level",
-          membership_status: "Membership Status",
-          member_update_join: "Join event (this run)",
-          member_update_removal: "Removal event (this run)",
-          hubspot_exists: "Exists in HubSpot",
-          sesip_committee_member: "SESIP Committee Member",
-          se_committee_member: "SE Committee Member",
-          tes_committee_member: "TES Committee Member",
-          automotive_task_force: "Automotive Task Force",
-          china_task_force: "China Task Force",
-          digital_wallets_task_force: "Digital Wallets Task Force",
-          japan_task_force: "Japan Task Force",
-          security_task_force: "Security Task Force",
-          trusted_open_source_silicon_tf: "Trusted Open Source Silicon TF"
-        },
+        columns: buildHubspotPreviewColumns(communityMappings),
         rows: hubspotRows
       },
       hubspotFoundPreview,
@@ -2197,9 +2169,14 @@ app.post("/api/db/member-updates", async (req, res) => {
 });
 
 app.post("/api/db/member-updates/sync-hubspot", async (req, res) => {
-  const hubspotToken = String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
+  const hubspotToken =
+    getHubspotApiToken(req) ||
+    String(process.env.HUBSPOT_ACCESS_TOKEN || "").trim();
   if (!hubspotToken) {
-    return res.status(503).json({ error: "Set HUBSPOT_ACCESS_TOKEN first." });
+    return res.status(503).json({
+      error:
+        "HubSpot is not connected. Connect OAuth or set HUBSPOT_ACCESS_TOKEN."
+    });
   }
   const selectedRows = Array.isArray(req.body?.rows) ? req.body.rows : [];
   if (!selectedRows.length) {

@@ -8,6 +8,7 @@ const UPSERT_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert"
 const BATCH_READ_URL = "https://api.hubapi.com/crm/v3/objects/contacts/batch/read";
 const CONTACT_PROPERTIES_URL = "https://api.hubapi.com/crm/v3/properties/contacts";
 
+/** Standard contact fields only. Community bools come from hubspot_community_mappings. */
 function defaultContactFieldMap() {
   return {
     email: "email",
@@ -23,16 +24,7 @@ function defaultContactFieldMap() {
     is_member: "hl_member",
     region: "hl_region",
     membership_level: "hl_membership_level",
-    membership_status: "hl_membership_status",
-    sesip_committee_member: "hl_sesip_committee_member",
-    se_committee_member: "hl_se_committee_member",
-    tes_committee_member: "hl_tes_committee_member",
-    automotive_task_force: "hl_automotive_task_force",
-    china_task_force: "hl_china_task_force",
-    japan_task_force: "hl_japan_task_force",
-    security_task_force: "hl_security_task_force",
-    digital_wallets_task_force: "hl_digital_wallets_task_force",
-    trusted_open_source_silicon_tf: "hl_trusted_open_source_silicon_tf"
+    membership_status: "hl_membership_status"
   };
 }
 

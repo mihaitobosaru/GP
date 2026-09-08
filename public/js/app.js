@@ -119,7 +119,7 @@ let dbUsersSortBy = "updated_on";
 let dbUsersSortDir = "desc";
 let syncPollTimer = null;
 
-const memberUpdatesDefaultColumns = [
+const memberUpdatesBaseColumns = [
   "hubspot_exists",
   "first_name",
   "last_name",
@@ -136,17 +136,35 @@ const memberUpdatesDefaultColumns = [
   "membership_level",
   "membership_status",
   "member_update_join",
-  "member_update_removal",
-  "sesip_committee_member",
-  "se_committee_member",
-  "tes_committee_member",
-  "automotive_task_force",
-  "china_task_force",
-  "digital_wallets_task_force",
-  "japan_task_force",
-  "security_task_force",
-  "trusted_open_source_silicon_tf"
+  "member_update_removal"
 ];
+
+const hubspotFoundBaseColumns = [
+  "first_name",
+  "last_name",
+  "company_name",
+  "email",
+  "job_title",
+  "city",
+  "state_region",
+  "postal_code",
+  "country_gp_data",
+  "contact_create_date",
+  "contact_last_updated_date"
+];
+
+function mappingFieldKeysFromPreview(preview) {
+  const fromApi = Array.isArray(preview?.communityMappings)
+    ? preview.communityMappings.map((m) => m.field_key).filter(Boolean)
+    : [];
+  if (fromApi.length) return fromApi;
+  const labels = preview?.columns || {};
+  return Object.keys(labels).filter(
+    (k) =>
+      !memberUpdatesBaseColumns.includes(k) &&
+      !hubspotFoundBaseColumns.includes(k)
+  );
+}
 
 function renderMemberUpdatesHubspotTable(preview) {
   if (!memberUpdatesTableWrap || !memberUpdatesTableStatus) return;
@@ -194,9 +212,16 @@ function renderMemberUpdatesHubspotTable(preview) {
   };
   selectAllTh.appendChild(selectAll);
   hr.appendChild(selectAllTh);
-  const cols = memberUpdatesDefaultColumns.filter((c) =>
-    rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
-  );
+  const mappingCols = mappingFieldKeysFromPreview({
+    ...preview,
+    communityMappings: preview?.communityMappings
+  }).filter((c) => rows.some((r) => Object.prototype.hasOwnProperty.call(r, c)));
+  const cols = [
+    ...memberUpdatesBaseColumns.filter((c) =>
+      rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
+    ),
+    ...mappingCols
+  ];
   cols.forEach((c) => {
     const th = document.createElement("th");
     th.textContent = labels[c] || c;
@@ -248,28 +273,10 @@ function renderMemberUpdatesHubspotFoundTable(preview) {
       "HubSpot users found: 0 (no matched contacts found in HubSpot).";
     return;
   }
-  const orderedColumns = [
-    "first_name",
-    "last_name",
-    "company_name",
-    "email",
-    "job_title",
-    "city",
-    "state_region",
-    "postal_code",
-    "country_gp_data",
-    "contact_create_date",
-    "contact_last_updated_date",
-    "sesip_committee_member",
-    "se_committee_member",
-    "tes_committee_member",
-    "automotive_task_force",
-    "china_task_force",
-    "digital_wallets_task_force",
-    "japan_task_force",
-    "security_task_force",
-    "trusted_open_source_silicon_task_force"
-  ];
+  const mappingCols = Object.keys(labels).filter(
+    (c) => !hubspotFoundBaseColumns.includes(c)
+  );
+  const orderedColumns = [...hubspotFoundBaseColumns, ...mappingCols];
   const cols = orderedColumns.filter((c) =>
     rows.some((r) => Object.prototype.hasOwnProperty.call(r, c))
   );
@@ -350,6 +357,7 @@ function showTab(which) {
   if (isDatabase) {
     loadDbStats();
     loadDbCommunities();
+    loadHubspotMappingsAdmin();
     dbUsersOffset = 0;
     loadDbUsersPage();
   }
@@ -889,7 +897,11 @@ if (dbMemberUpdatesBtn && memberUpdatesProgress) {
         }
       }
       memberUpdatesProgress.textContent = msg;
-      renderMemberUpdatesHubspotTable(data.hubspotPreview);
+      const previewWithMappings = {
+        ...(data.hubspotPreview || {}),
+        communityMappings: data.communityMappings || []
+      };
+      renderMemberUpdatesHubspotTable(previewWithMappings);
       renderMemberUpdatesHubspotFoundTable(data.hubspotFoundPreview);
       if (memberUpdatesHubspotFoundStatus) {
         const unresolvedMsg = formatCustomFieldResolution(
@@ -1202,3 +1214,239 @@ loadMemberTableBtn.onclick = async () => {
 refreshAuthStatus();
 loadAutomationStatus();
 ensureAutomationPolling();
+
+const hubspotMappingsStatus = document.getElementById("hubspotMappingsStatus");
+const hubspotMappingsWrap = document.getElementById("hubspotMappingsWrap");
+const hubspotMappingForm = document.getElementById("hubspotMappingForm");
+const hubspotMappingId = document.getElementById("hubspotMappingId");
+const hubspotMappingCommunity = document.getElementById("hubspotMappingCommunity");
+const hubspotMappingLabel = document.getElementById("hubspotMappingLabel");
+const hubspotMappingFieldKey = document.getElementById("hubspotMappingFieldKey");
+const hubspotMappingProperty = document.getElementById("hubspotMappingProperty");
+const hubspotMappingEnabled = document.getElementById("hubspotMappingEnabled");
+const hubspotMappingSaveBtn = document.getElementById("hubspotMappingSaveBtn");
+const hubspotMappingCancelBtn = document.getElementById("hubspotMappingCancelBtn");
+const hubspotMappingRefreshPropsBtn = document.getElementById(
+  "hubspotMappingRefreshPropsBtn"
+);
+const hubspotPropertyOptions = document.getElementById("hubspotPropertyOptions");
+
+function slugifyFieldKeyClient(label) {
+  return String(label || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
+
+function resetHubspotMappingForm() {
+  if (!hubspotMappingForm) return;
+  hubspotMappingId.value = "";
+  hubspotMappingLabel.value = "";
+  hubspotMappingFieldKey.value = "";
+  hubspotMappingProperty.value = "";
+  hubspotMappingEnabled.checked = true;
+  if (hubspotMappingSaveBtn) hubspotMappingSaveBtn.textContent = "Add mapping";
+  if (hubspotMappingCancelBtn) hubspotMappingCancelBtn.classList.add("hidden");
+}
+
+async function loadHubspotPropertyOptions() {
+  if (!hubspotPropertyOptions) return;
+  try {
+    const res = await fetch("/api/hubspot/contact-properties");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "failed");
+    hubspotPropertyOptions.innerHTML = "";
+    for (const p of data.properties || []) {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.label = p.label ? `${p.label} (${p.name})` : p.name;
+      hubspotPropertyOptions.appendChild(opt);
+    }
+  } catch (e) {
+    if (hubspotMappingsStatus) {
+      hubspotMappingsStatus.textContent =
+        (hubspotMappingsStatus.textContent
+          ? hubspotMappingsStatus.textContent + " "
+          : "") +
+        `HubSpot properties unavailable: ${e.message}`;
+    }
+  }
+}
+
+async function fillHubspotMappingCommunities(selectedKey = "") {
+  if (!hubspotMappingCommunity) return;
+  const res = await fetch("/api/db/communities");
+  const rows = await res.json();
+  if (!res.ok) throw new Error(rows.error || "failed to load communities");
+  hubspotMappingCommunity.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Select a community…";
+  hubspotMappingCommunity.appendChild(placeholder);
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const opt = document.createElement("option");
+    opt.value = r.community_key;
+    opt.textContent = `${r.name || "(unnamed)"} (${r.community_key})`;
+    hubspotMappingCommunity.appendChild(opt);
+  }
+  if (selectedKey) hubspotMappingCommunity.value = selectedKey;
+}
+
+function renderHubspotMappingsTable(rows) {
+  if (!hubspotMappingsWrap) return;
+  hubspotMappingsWrap.innerHTML = "";
+  if (!rows.length) {
+    hubspotMappingsWrap.textContent = "No mappings yet.";
+    return;
+  }
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  ["Label", "Community key", "Field key", "HubSpot property", "Enabled", ""].forEach(
+    (h) => {
+      const th = document.createElement("th");
+      th.textContent = h;
+      hr.appendChild(th);
+    }
+  );
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    [
+      r.label,
+      r.community_key,
+      r.field_key,
+      r.hubspot_property,
+      r.enabled ? "Yes" : "No"
+    ].forEach((cell) => {
+      const td = document.createElement("td");
+      td.textContent = cell == null ? "" : String(cell);
+      tr.appendChild(td);
+    });
+    const actions = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => {
+      hubspotMappingId.value = String(r.id);
+      hubspotMappingCommunity.value = r.community_key;
+      hubspotMappingLabel.value = r.label || "";
+      hubspotMappingFieldKey.value = r.field_key || "";
+      hubspotMappingProperty.value = r.hubspot_property || "";
+      hubspotMappingEnabled.checked = Boolean(r.enabled);
+      if (hubspotMappingSaveBtn) hubspotMappingSaveBtn.textContent = "Save changes";
+      if (hubspotMappingCancelBtn) hubspotMappingCancelBtn.classList.remove("hidden");
+    };
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.textContent = "Delete";
+    delBtn.style.marginLeft = "6px";
+    delBtn.onclick = async () => {
+      if (!confirm(`Delete mapping “${r.label}”?`)) return;
+      try {
+        const res = await fetch(`/api/hubspot/community-mappings/${r.id}`, {
+          method: "DELETE"
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "delete failed");
+        await loadHubspotMappingsAdmin();
+      } catch (e) {
+        if (hubspotMappingsStatus) {
+          hubspotMappingsStatus.textContent = "Error: " + e.message;
+        }
+      }
+    };
+    actions.appendChild(editBtn);
+    actions.appendChild(delBtn);
+    tr.appendChild(actions);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  hubspotMappingsWrap.appendChild(table);
+}
+
+async function loadHubspotMappingsAdmin() {
+  if (!hubspotMappingsStatus || !hubspotMappingsWrap) return;
+  hubspotMappingsStatus.textContent = "Loading mappings…";
+  try {
+    await fillHubspotMappingCommunities(hubspotMappingCommunity?.value || "");
+    const res = await fetch("/api/hubspot/community-mappings");
+    const rows = await res.json();
+    if (!res.ok) throw new Error(rows.error || "failed");
+    renderHubspotMappingsTable(Array.isArray(rows) ? rows : []);
+    hubspotMappingsStatus.textContent = `${Array.isArray(rows) ? rows.length : 0} mapping(s).`;
+    loadHubspotPropertyOptions();
+  } catch (e) {
+    hubspotMappingsStatus.textContent = "Error: " + e.message;
+  }
+}
+
+if (hubspotMappingLabel && hubspotMappingFieldKey) {
+  hubspotMappingLabel.addEventListener("input", () => {
+    if (hubspotMappingId.value) return;
+    hubspotMappingFieldKey.value = slugifyFieldKeyClient(hubspotMappingLabel.value);
+  });
+}
+
+if (hubspotMappingCommunity && hubspotMappingLabel) {
+  hubspotMappingCommunity.addEventListener("change", () => {
+    if (hubspotMappingId.value) return;
+    const opt = hubspotMappingCommunity.selectedOptions?.[0];
+    if (!opt || !opt.value) return;
+    const name = String(opt.textContent || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (!hubspotMappingLabel.value && name) {
+      hubspotMappingLabel.value = name;
+      hubspotMappingFieldKey.value = slugifyFieldKeyClient(name);
+    }
+  });
+}
+
+if (hubspotMappingCancelBtn) {
+  hubspotMappingCancelBtn.onclick = () => resetHubspotMappingForm();
+}
+
+if (hubspotMappingRefreshPropsBtn) {
+  hubspotMappingRefreshPropsBtn.onclick = () => loadHubspotPropertyOptions();
+}
+
+if (hubspotMappingForm) {
+  hubspotMappingForm.onsubmit = async (e) => {
+    e.preventDefault();
+    const payload = {
+      community_key: hubspotMappingCommunity.value,
+      label: hubspotMappingLabel.value.trim(),
+      field_key: hubspotMappingFieldKey.value.trim(),
+      hubspot_property: hubspotMappingProperty.value.trim(),
+      enabled: hubspotMappingEnabled.checked
+    };
+    const id = hubspotMappingId.value.trim();
+    try {
+      const res = await fetch(
+        id
+          ? `/api/hubspot/community-mappings/${id}`
+          : "/api/hubspot/community-mappings",
+        {
+          method: id ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "save failed");
+      resetHubspotMappingForm();
+      await loadHubspotMappingsAdmin();
+      if (hubspotMappingsStatus) {
+        hubspotMappingsStatus.textContent =
+          (hubspotMappingsStatus.textContent || "") + " Saved.";
+      }
+    } catch (err) {
+      if (hubspotMappingsStatus) {
+        hubspotMappingsStatus.textContent = "Error: " + err.message;
+      }
+    }
+  };
+}
