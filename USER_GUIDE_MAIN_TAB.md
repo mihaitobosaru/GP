@@ -49,10 +49,11 @@ Important columns:
 - **Join event**: user recently joined a community.
 - **Removal event**: user was recently removed from a community.
 - **Exists in HubSpot**: whether a matching HubSpot contact was found.
-- Task force / committee columns: boolean values sent to HubSpot custom fields.
+- Task force / committee columns: boolean values from your **enabled community mappings** (configured on the Database tab). These are sent to matching HubSpot custom properties on sync.
 
 Tip:
 
+- If a column shows **(unresolved)** or the status mentions unresolved custom fields, that HubSpot property is missing or mistyped — fix the mapping before relying on that field.
 - If you are not sure, sync a small batch first.
 
 ## Manual Sync (Step-by-Step)
@@ -140,8 +141,47 @@ Use this tab to build/refresh the local data used by the app.
 
 ### Useful Views In This Tab
 
+- **HubSpot community mappings**: add, edit, or disable which HL communities map to which HubSpot boolean properties (see below).
 - **Communities in database**: confirms communities and member counts were imported.
 - **Users in database**: search, sort, and page through cached users.
+
+## HubSpot Community Mappings (Admin)
+
+Use this when you need a new committee/task-force boolean in HubSpot, or when a property shows as unresolved.
+
+Mappings live in the local database. Only **enabled** mappings appear in the HubSpot sync preview and are written on sync.
+
+### Before You Add A Mapping
+
+1. Run **Re-sync now** (or confirm the community already appears under Communities in database).
+2. In HubSpot, create the contact property if it does not exist yet (usually a boolean / checkbox style field).
+3. Copy the HubSpot property **internal name** (not only the display label).
+
+### Add Or Edit A Mapping
+
+1. Open the **Database** tab.
+2. In **HubSpot community mappings**, choose:
+   - **Community** (from synced communities),
+   - **Label** (column title in the preview),
+   - **Field key** (internal id; auto-filled from the label for new rows),
+   - **HubSpot property** (exact internal name; use the datalist after refreshing properties),
+   - **Enabled**.
+3. Click **Add mapping** (or **Save changes** when editing).
+4. Optional: click **Refresh HubSpot properties** so the property list is up to date.
+5. Go to the **HubSpot** tab and run **Check HL member updates** again.
+
+You should see the new column in the preview. If the HubSpot-found table header shows `(unresolved)`, the property name still does not match HubSpot.
+
+### Unresolved Fields — What To Do
+
+If status says **Unresolved custom fields** (for example `Trusted Open Source Silicon TF`):
+
+1. In HubSpot, open Contact properties and find the field.
+2. Copy the exact **internal name**.
+3. On Database → HubSpot community mappings, **Edit** that row and paste the correct HubSpot property name.
+4. Re-run **Check HL member updates**.
+
+Until it resolves, that boolean is **not written** on sync. Other fields still sync normally.
 
 ## How To Use The Explorer Tab
 
@@ -183,6 +223,14 @@ If sync says HubSpot is not connected:
 1. Reconnect HubSpot OAuth (or check token setup).
 2. Retry sync.
 
+### Unresolved HubSpot Custom Fields
+
+If the preview or status mentions unresolved custom fields:
+
+1. Open **Database** → **HubSpot community mappings**.
+2. Confirm the HubSpot property internal name matches HubSpot exactly.
+3. Refresh HubSpot properties and re-check member updates.
+
 ### Sync Already Running
 
 If you get "Sync already running":
@@ -203,6 +251,7 @@ Use this checklist each day:
 
 ## Notes
 
-- The **Database** tab is mainly for initial/full data sync.
+- The **Database** tab is for initial/full data sync and for managing **HubSpot community mappings**.
 - The **Explorer** tab is for lookup and spot checks.
 - Most daily work should happen in the **HubSpot** tab.
+- New communities only sync as HubSpot booleans after you add an enabled mapping and the HubSpot property resolves.

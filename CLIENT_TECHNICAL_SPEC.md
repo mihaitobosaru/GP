@@ -1,13 +1,13 @@
 # Higher Logic -> HubSpot Sync Operations Guide
 
 ## Scope
--change
+
 This document is focused on the **main HubSpot tab workflow** only:
 
 - **Manual sync**: user selects which records to sync.
 - **Auto-sync**: scheduled sync runs.
 
-Explorer/Database tabs are supporting utilities and are intentionally minimized here.
+Explorer/Database tabs are supporting utilities and are intentionally minimized here. Community → HubSpot property mappings are configured on the **Database** tab and documented below because they control which boolean fields sync writes.
 
 ## What The Main Tab Does
 
@@ -80,8 +80,72 @@ This is the core day-to-day process.
 
 - Identity key: **email**.
 - Standard properties: name, company, title, city/state/zip/country.
-- Membership/task-force booleans.
-- Only mapped/available HubSpot properties are written.
+- Membership/task-force/committee booleans from **enabled** community mappings.
+- Only resolved HubSpot properties are written (unresolved mappings are skipped).
+
+## Community → HubSpot Property Mappings
+
+Mappings are stored in SQLite (`hubspot_community_mappings`) and managed in the UI. They are no longer hardcoded in application code.
+
+### Mapping Model
+
+Each enabled mapping has:
+
+| Field | Meaning |
+|---|---|
+| `community_key` | Higher Logic community GUID |
+| `label` | Display name in preview tables |
+| `field_key` | Stable internal key used on sync rows (e.g. `sesip_committee_member`) |
+| `hubspot_property` | HubSpot contact property **internal name** (e.g. `hl_sesip_committee_member`) |
+| `enabled` | Soft on/off; disabled mappings are ignored by sync/preview |
+| `sort_order` | Column order |
+
+On first database open, the table is seeded with the historical default committee/task-force mappings.
+
+### How Sync Uses Mappings
+
+1. Load enabled mappings from SQLite.
+2. For each user, set each mapping’s `field_key` to `true`/`false` based on local membership in that `community_key`.
+3. Resolve each `hubspot_property` against HubSpot contact properties (see below).
+4. Write only properties that resolve successfully.
+
+Preview tables (HL rows and HubSpot-found rows) build boolean columns dynamically from the same enabled mappings.
+
+### Property Resolution
+
+For each mapping, the app:
+
+1. Looks up the configured HubSpot **internal name** in the portal’s contact properties.
+2. If not found, tries an exact **label** match against HubSpot property labels.
+3. If both fail → `resolvedBy: "unresolved"`.
+
+Unresolved fields:
+
+- appear as `(unresolved)` in the HubSpot-found preview headers,
+- are listed in the status message after **Check HL member updates**,
+- are **not written** during sync.
+
+Typical causes: property missing in HubSpot, wrong internal name, or label mismatch for the fallback.
+
+### Admin APIs
+
+- `GET /api/hubspot/community-mappings` — list mappings (`?enabledOnly=1` optional)
+- `POST /api/hubspot/community-mappings` — create
+- `PUT /api/hubspot/community-mappings/:id` — update
+- `DELETE /api/hubspot/community-mappings/:id` — delete
+- `GET /api/hubspot/contact-properties` — HubSpot contact property picker source
+
+### Where To Configure In The UI
+
+**Database** tab → **HubSpot community mappings**:
+
+1. Ensure communities are synced (`Re-sync now`) so the community dropdown is populated.
+2. Create the HubSpot contact boolean property first (if it does not exist).
+3. Add or edit a mapping: community, label, field key, HubSpot property internal name.
+4. Use **Refresh HubSpot properties** to reload the property datalist.
+5. Re-run **Check HL member updates** on the HubSpot tab to see new columns and resolution status.
+
+After any mapping change, re-check member updates (and optionally automation **Run now**) so operators confirm resolution before relying on sync.
 
 ## Auto-Sync (Scheduled Operations)
 
@@ -132,7 +196,7 @@ Each cycle:
 ### HubSpot Errors
 
 - `HubSpot is not connected`: connect OAuth or provide `HUBSPOT_ACCESS_TOKEN`.
-- Field/property mismatch: custom property missing or wrong internal name.
+- Field/property mismatch / **Unresolved custom fields**: HubSpot contact property missing or wrong internal name in the community mapping. Fix on Database → HubSpot community mappings (copy exact internal name from HubSpot), then re-check member updates.
 
 ### Job State Errors
 
@@ -142,6 +206,7 @@ Each cycle:
 ## Minimal Supporting Setup (Outside Main Tab)
 
 - **Database tab**: run one initial full `Re-sync now` before relying on member update sync.
+- **Database tab → HubSpot community mappings**: confirm enabled mappings and that HubSpot properties resolve (no unresolved fields after a member-updates check).
 - **Explorer tab**: optional spot-check only.
 
 ## Daily Operator Runbook
@@ -155,7 +220,7 @@ Each cycle:
 ## Weekly Admin Runbook
 
 1. Re-validate HL and HubSpot auth.
-2. Validate custom field mapping still resolves correctly.
+2. On Database → HubSpot community mappings, confirm mappings are correct; after **Check HL member updates**, confirm no unresolved custom fields.
 3. Review automation settings (`intervalDays`, `lookbackDays`).
 4. Trigger **Run now** after any credential or mapping change.
 
